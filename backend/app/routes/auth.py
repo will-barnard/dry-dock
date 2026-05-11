@@ -34,7 +34,7 @@ def _render(request: Request, name: str, ctx: dict, status_code: int = 200) -> H
 # ── /setup: first-run bootstrap ───────────────────────────────────
 
 
-@router.get("/setup", response_class=HTMLResponse)
+@router.get("/setup", response_class=HTMLResponse, response_model=None)
 async def setup_page(
     request: Request, session: AsyncSession = Depends(get_session)
 ) -> HTMLResponse | RedirectResponse:
@@ -43,7 +43,7 @@ async def setup_page(
     return _render(request, "setup.html", {"error": None, "email": "", "name": ""})
 
 
-@router.post("/setup", response_class=HTMLResponse)
+@router.post("/setup", response_class=HTMLResponse, response_model=None)
 async def setup_submit(
     request: Request,
     email: str = Form(...),
@@ -93,7 +93,7 @@ async def setup_submit(
 # ── /login + /logout ──────────────────────────────────────────────
 
 
-@router.get("/login", response_class=HTMLResponse)
+@router.get("/login", response_class=HTMLResponse, response_model=None)
 async def login_page(
     request: Request, session: AsyncSession = Depends(get_session)
 ) -> HTMLResponse | RedirectResponse:
@@ -102,7 +102,7 @@ async def login_page(
     return _render(request, "login.html", {"error": None, "email": ""})
 
 
-@router.post("/login", response_class=HTMLResponse)
+@router.post("/login", response_class=HTMLResponse, response_model=None)
 async def login_submit(
     request: Request,
     email: str = Form(...),

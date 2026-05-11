@@ -27,6 +27,14 @@ from app.models import (
     Worker,
 )
 from app.orchestrator.dispatcher import dispatcher
+from app.orchestrator.lifecycle import (
+    DELETABLE_STATUSES,
+    delete_project as do_delete_project,
+    delete_task as do_delete_task,
+    reopen_approval as do_reopen_approval,
+    requeue_failed_children as do_requeue_failed_children,
+    rerun_task as do_rerun_task,
+)
 from app.orchestrator.planner import materialize_plan
 from app.orchestrator.pools import pool_for_kind
 from app.orchestrator.registry import registry
@@ -201,6 +209,87 @@ async def task_detail(
             "events": events,
         },
     )
+
+
+# ── delete / re-run actions ────────────────────────────────────────
+
+
+@router.post("/tasks/{task_id}/delete", response_class=HTMLResponse)
+async def delete_task_form(
+    task_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    task = await session.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "task not found")
+    if task.status not in DELETABLE_STATUSES:
+        raise HTTPException(409, f"task is {task.status.value} — cancel it first")
+    project_id = task.project_id
+    await do_delete_task(session, task, cascade=True)
+    await session.commit()
+    return RedirectResponse(f"/projects/{project_id}", status_code=303)
+
+
+@router.post("/tasks/{task_id}/rerun", response_class=HTMLResponse)
+async def rerun_task_form(
+    task_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    task = await session.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "task not found")
+    try:
+        await do_rerun_task(session, task)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    await session.commit()
+    dispatcher.poke()
+    return RedirectResponse(f"/tasks/{task_id}", status_code=303)
+
+
+@router.post("/tasks/{task_id}/rerun-failed-children", response_class=HTMLResponse)
+async def requeue_children_form(
+    task_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    task = await session.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "task not found")
+    await do_requeue_failed_children(session, task)
+    await session.commit()
+    dispatcher.poke()
+    return RedirectResponse(f"/tasks/{task_id}", status_code=303)
+
+
+@router.post("/projects/{project_id}/delete", response_class=HTMLResponse)
+async def delete_project_form(
+    project_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    project = await session.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+    await do_delete_project(session, project)
+    await session.commit()
+    return RedirectResponse("/", status_code=303)
+
+
+@router.post("/approvals/{gate_id}/reopen", response_class=HTMLResponse)
+async def reopen_approval_form(
+    gate_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    gate = await session.get(ApprovalGate, gate_id)
+    if not gate:
+        raise HTTPException(404, "approval gate not found")
+    await do_reopen_approval(session, gate)
+    await session.commit()
+    return RedirectResponse(f"/tasks/{gate.task_id}", status_code=303)
 
 
 @router.post("/approvals/{gate_id}", response_class=HTMLResponse)

@@ -15,13 +15,45 @@
       {% if task.branch_name %} · branch: {{ task.branch_name }}{% endif %}
     </div>
   </div>
-  <span class="text-xs px-2 py-1 rounded
-    {% if task.status.value == 'succeeded' %}bg-emerald-100 text-emerald-700
-    {% elif task.status.value == 'failed' or task.status.value == 'rejected' %}bg-rose-100 text-rose-700
-    {% elif task.status.value == 'awaiting_approval' %}bg-amber-100 text-amber-700
-    {% elif task.status.value == 'running' or task.status.value == 'claimed' %}bg-sky-100 text-sky-700
-    {% else %}bg-slate-100 text-slate-700{% endif %}" id="task-status">{{ task.status.value }}</span>
+  <div class="flex items-center gap-2">
+    <span class="text-xs px-2 py-1 rounded
+      {% if task.status.value == 'succeeded' %}bg-emerald-100 text-emerald-700
+      {% elif task.status.value == 'failed' or task.status.value == 'rejected' %}bg-rose-100 text-rose-700
+      {% elif task.status.value == 'awaiting_approval' %}bg-amber-100 text-amber-700
+      {% elif task.status.value == 'running' or task.status.value == 'claimed' %}bg-sky-100 text-sky-700
+      {% else %}bg-slate-100 text-slate-700{% endif %}" id="task-status">{{ task.status.value }}</span>
+  </div>
 </header>
+
+{# Action row — buttons appear only when the task is in a state where they make sense. #}
+<section class="mt-4 flex flex-wrap items-center gap-2 text-xs">
+  {% if task.status.value in ('failed', 'rejected', 'cancelled') %}
+    <form method="post" action="/tasks/{{ task.id }}/rerun" class="m-0">
+      <button class="px-3 py-1.5 rounded bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-medium">
+        Re-run this task
+      </button>
+    </form>
+  {% endif %}
+
+  {% if task.kind.value == 'plan' %}
+    <form method="post" action="/tasks/{{ task.id }}/rerun-failed-children" class="m-0">
+      <button class="px-3 py-1.5 rounded bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-medium">
+        Re-queue failed children
+      </button>
+    </form>
+  {% endif %}
+
+  {% if task.status.value not in ('running', 'claimed') %}
+    <form method="post" action="/tasks/{{ task.id }}/delete" class="m-0"
+          onsubmit="return confirm('Delete this task and any child tasks underneath it? This cannot be undone.');">
+      <button class="px-3 py-1.5 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-medium">
+        Delete task
+      </button>
+    </form>
+  {% else %}
+    <span class="text-slate-400 italic">Task is {{ task.status.value }} — can't delete until it finishes.</span>
+  {% endif %}
+</section>
 
 {% for a in approvals %}
   {% if a.status.value == 'pending' %}
@@ -39,6 +71,22 @@
       <input name="note" placeholder="why?" class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm">
       <button class="bg-rose-600 text-white text-sm px-3 py-1 rounded">Reject</button>
     </form>
+  </section>
+  {% else %}
+  <section class="mt-4 bg-slate-50 border border-slate-200 rounded p-4">
+    <div class="flex items-baseline justify-between">
+      <h2 class="font-semibold text-slate-700">
+        {{ a.kind.value | upper }} approval — {{ a.status.value }}
+      </h2>
+      <form method="post" action="/approvals/{{ a.id }}/reopen" class="m-0"
+            onsubmit="return confirm('Re-open this approval and let it be decided again?');">
+        <button class="text-xs px-2 py-1 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-300">
+          Re-open
+        </button>
+      </form>
+    </div>
+    {% if a.note %}<p class="text-sm mt-2 text-slate-600">Note: {{ a.note }}</p>{% endif %}
+    {% if a.payload.summary %}<p class="text-sm mt-2 whitespace-pre-wrap text-slate-700">{{ a.payload.summary }}</p>{% endif %}
   </section>
   {% endif %}
 {% endfor %}

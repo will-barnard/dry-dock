@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.models import Project
 from app.orchestrator.git_service import ensure_clone
+from app.orchestrator.lifecycle import delete_project as do_delete_project
 from app.schemas import ProjectCreate, ProjectOut
 from app.util.github import normalize_owner_repo
 
@@ -64,3 +65,14 @@ async def get_project(
     if not project:
         raise HTTPException(404, "project not found")
     return project
+
+
+@router.delete("/{project_id}", status_code=204)
+async def delete_project_api(
+    project_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+) -> None:
+    project = await session.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+    await do_delete_project(session, project)
+    await session.commit()

@@ -8,9 +8,13 @@
     <h1 class="text-2xl font-semibold">{{ project.name }}</h1>
     <div class="text-sm text-slate-500 font-mono">{{ project.github_owner }}/{{ project.github_repo }} ({{ project.default_branch }})</div>
   </div>
-  <div class="text-xs text-slate-500 space-x-2">
+  <div class="text-xs text-slate-500 flex items-center gap-2">
     <span class="px-2 py-1 rounded {% if project.auto_approve_plans %}bg-amber-100 text-amber-700{% else %}bg-slate-100{% endif %}">plans: {{ 'auto' if project.auto_approve_plans else 'gated' }}</span>
     <span class="px-2 py-1 rounded {% if project.auto_approve_merges %}bg-amber-100 text-amber-700{% else %}bg-slate-100{% endif %}">merges: {{ 'auto' if project.auto_approve_merges else 'gated' }}</span>
+    <form method="post" action="/projects/{{ project.id }}/delete" class="m-0"
+          onsubmit="return confirm('Delete this project and ALL of its tasks? This cannot be undone.');">
+      <button class="px-2 py-1 rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200">Delete project</button>
+    </form>
   </div>
 </header>
 

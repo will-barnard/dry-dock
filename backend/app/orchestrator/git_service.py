@@ -82,9 +82,6 @@ async def ensure_clone(project: Project) -> Path:
     return target
 
 
-async def branch_name_for_task(task: Task) -> str:
-
-
 async def apply_patch_and_push(project: Project, task: Task, patch: str) -> str:
     """Apply a unified diff on a new agent branch, then push.
 

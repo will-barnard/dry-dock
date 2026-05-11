@@ -144,6 +144,9 @@ async def _handle_result(
             run.finished_at = datetime.now(timezone.utc)
             run.tokens_in = msg.tokens_in
             run.tokens_out = msg.tokens_out
+            # Record the model the worker actually used (sent back in the result).
+            if msg.model_used and not run.model_used:
+                run.model_used = msg.model_used
 
             if msg.success:
                 # If the task produced a patch artifact, try to apply + open PR.

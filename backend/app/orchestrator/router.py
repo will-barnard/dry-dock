@@ -40,10 +40,20 @@ def _worker_can_run(worker: LiveWorker, task: Task, required_model: str | None) 
 
 async def select_worker_for_task(task: Task) -> LiveWorker | None:
     candidates = await registry.by_pool(task.required_pool)
-    # Resolve the model the worker will be asked to run: task override → role
-    # setting → env default. We filter on this so we never grant a job to a
-    # worker that lacks the model the runner will try to load.
-    required_model = task.preferred_model or await get_role_model(task.required_pool)
+    # Only enforce model availability when the task explicitly requests a
+    # specific model. If preferred_model is unset, any worker in the pool can
+    # claim the job and will run it with its own DEFAULT_MODEL.
+    required_model = task.preferred_model or None
+    # Check role setting only if no per-task model is set AND the role has a
+    # non-default override saved in app_settings (explicit admin choice).
+    if not required_model:
+        role_model = await get_role_model(task.required_pool)
+        # Only gate on the role model if at least one pool worker actually has
+        # it installed — avoids blocking dispatch when the setting is the
+        # backend env default and the workers use a different local model.
+        pool_workers = await registry.by_pool(task.required_pool)
+        if role_model and any(_model_available(w.installed_models, role_model) for w in pool_workers):
+            required_model = role_model
     candidates = [w for w in candidates if _worker_can_run(w, task, required_model)]
     if not candidates:
         return None

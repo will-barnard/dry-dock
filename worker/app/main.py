@@ -179,6 +179,7 @@ class Worker:
             payload=result.payload,
             tokens_in=result.tokens_in,
             tokens_out=result.tokens_out,
+            model_used=ctx.preferred_model or self.settings.default_model,
         ).model_dump(mode="json"))
 
         self.current_task = None

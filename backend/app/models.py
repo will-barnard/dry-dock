@@ -195,6 +195,8 @@ class Run(Base):
     tokens_in: Mapped[int] = mapped_column(BigInteger, default=0)
     tokens_out: Mapped[int] = mapped_column(BigInteger, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    worker_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     metadata_blob: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
 
     task: Mapped[Task] = relationship(back_populates="runs")

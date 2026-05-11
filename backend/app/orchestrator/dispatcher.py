@@ -21,7 +21,6 @@ from app.orchestrator.event_bus import bus
 from app.orchestrator.pools import KNOWN_POOLS
 from app.orchestrator.protocol import ClaimGrantMsg
 from app.orchestrator.router import select_worker_for_task
-from app.orchestrator.settings_service import get_role_model
 
 log = structlog.get_logger()
 
@@ -64,14 +63,17 @@ async def _dispatch_one_for_pool(pool: str) -> bool:
                 attempt=task.attempt,
                 status=TaskStatus.CLAIMED,
                 started_at=datetime.now(timezone.utc),
+                worker_name=worker.name,
+                model_used=effective_model or None,
             )
             session.add(run)
             await session.flush()
 
-            # If the task didn't specify a model, fall back to the role's
-            # configured default (stored in app_settings) — which itself falls
-            # back to the env-level DEFAULT_*_MODEL.
-            effective_model = task.preferred_model or await get_role_model(task.required_pool)
+            # Only pass a specific model to the worker when the task explicitly
+            # sets one. When preferred_model is None the worker falls back to
+            # its own DEFAULT_MODEL env var — right for heterogeneous pools
+            # where each machine runs different local models.
+            effective_model = task.preferred_model or None
 
             grant = ClaimGrantMsg(
                 task_id=task.id,

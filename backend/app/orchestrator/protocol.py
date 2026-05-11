@@ -80,6 +80,7 @@ class ResultMsg(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     tokens_in: int = 0
     tokens_out: int = 0
+    model_used: str | None = None
 
 
 class ErrorMsg(BaseModel):

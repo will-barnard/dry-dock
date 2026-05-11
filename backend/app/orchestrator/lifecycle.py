@@ -128,6 +128,24 @@ async def requeue_failed_children(session: AsyncSession, parent: Task) -> int:
     return len(rows)
 
 
+async def promote_ready_children(session: AsyncSession, task: Task) -> int:
+    """Advance PENDING tasks that were waiting on `task` to QUEUED now that it
+    has succeeded. Call this whenever a task transitions to SUCCEEDED so its
+    direct dependents can be dispatched."""
+    result = await session.execute(
+        select(Task).where(
+            Task.parent_task_id == task.id,
+            Task.status == TaskStatus.PENDING,
+        )
+    )
+    children = list(result.scalars().all())
+    for child in children:
+        child.status = TaskStatus.QUEUED
+    if children:
+        log.info("lifecycle.promoted_children", parent=str(task.id), count=len(children))
+    return len(children)
+
+
 # ── approval actions ──────────────────────────────────────────────
 
 

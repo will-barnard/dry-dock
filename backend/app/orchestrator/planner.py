@@ -57,8 +57,9 @@ async def materialize_plan(session: AsyncSession, plan_task: Task) -> list[Task]
 
         pool = entry.get("required_pool") or KIND_TO_POOL[kind]
         depends_on = entry.get("depends_on")
+        has_dep = isinstance(depends_on, int) and depends_on in id_by_index
         parent_id: uuid.UUID | None = plan_task.id
-        if isinstance(depends_on, int) and depends_on in id_by_index:
+        if has_dep:
             parent_id = id_by_index[depends_on]
 
         new_task = Task(
@@ -73,7 +74,9 @@ async def materialize_plan(session: AsyncSession, plan_task: Task) -> list[Task]
             min_context=int(entry.get("min_context", 0)),
             preferred_model=entry.get("preferred_model"),
             payload=entry.get("payload") or {},
-            status=TaskStatus.QUEUED,
+            # Tasks that depend on another plan step start PENDING and are
+            # promoted to QUEUED only after their parent task succeeds.
+            status=TaskStatus.PENDING if has_dep else TaskStatus.QUEUED,
         )
         session.add(new_task)
         await session.flush()

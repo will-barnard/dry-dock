@@ -23,6 +23,7 @@ from app.orchestrator.event_bus import bus
 from app.orchestrator.lifecycle import (
     DELETABLE_STATUSES,
     delete_task as do_delete_task,
+    promote_ready_children,
     requeue_failed_children as do_requeue_failed_children,
     rerun_task as do_rerun_task,
 )
@@ -188,6 +189,7 @@ async def decide_approval(
     elif gate.kind == ApprovalGateKind.MERGE and body.approve:
         # The actual merge is performed asynchronously by the merge service.
         task.status = TaskStatus.SUCCEEDED
+        await promote_ready_children(session, task)
     elif gate.kind == ApprovalGateKind.MERGE and not body.approve:
         task.status = TaskStatus.REJECTED
 

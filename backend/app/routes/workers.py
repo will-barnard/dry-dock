@@ -35,6 +35,7 @@ from app.models import (
 from app.orchestrator.dispatcher import dispatcher
 from app.orchestrator.event_bus import bus
 from app.orchestrator.git_service import apply_patch_and_push, open_pull_request
+from app.orchestrator.lifecycle import promote_ready_children
 from app.orchestrator.protocol import (
     ArtifactMsg,
     ClaimRequestMsg,
@@ -192,6 +193,7 @@ async def _handle_result(
                     else:
                         task.status = TaskStatus.SUCCEEDED
                         task.result = {"summary": msg.summary, **msg.payload}
+                        await promote_ready_children(session, task)
 
             if not msg.success:
                 task.status = (

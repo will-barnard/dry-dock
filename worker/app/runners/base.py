@@ -216,15 +216,18 @@ def extract_search_replace_blocks(text: str) -> list[tuple[str, str, str]]:
             stripped = prev.strip().lstrip("#").strip()
             if not stripped:
                 continue
-            # Skip filenames that are obviously sentences; favor things that
-            # look like paths or have a file extension.
-            if "/" in stripped or "." in stripped or "_" in stripped:
-                # Pull off any trailing punctuation that prose-around might leave.
-                filename = stripped.rstrip(":` ").lstrip("`")
+            # Clean backticks/punctuation before the path-vs-prose test.
+            candidate = stripped.rstrip(":` ").lstrip("`").strip()
+            # A real file path has no spaces and contains at least one
+            # path-like character. Prose sentences (even ones containing
+            # "Vue.js" or a slash) always have spaces, so this rejects them.
+            if " " not in candidate and (
+                "/" in candidate or "." in candidate or "_" in candidate
+            ):
+                filename = candidate
                 break
-            # If first non-empty line back doesn't look path-y, stop hunting
-            # rather than walking back arbitrarily — protects us from grabbing
-            # an unrelated sentence.
+            # If the first non-empty line back doesn't look like a path, stop
+            # hunting rather than walking further into prose.
             break
         if filename:
             blocks.append((filename, m.group("search"), m.group("replace")))

@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,10 +100,10 @@ async def get_task(
     return task
 
 
-@router.delete("/{task_id}", status_code=204)
+@router.delete("/{task_id}", status_code=204, response_class=Response)
 async def delete_task_api(
     project_id: uuid.UUID, task_id: uuid.UUID, session: AsyncSession = Depends(get_session)
-) -> None:
+) -> Response:
     task = await session.get(Task, task_id)
     if not task or task.project_id != project_id:
         raise HTTPException(404, "task not found")
@@ -111,6 +111,7 @@ async def delete_task_api(
         raise HTTPException(409, f"task is {task.status.value} — cancel it first")
     await do_delete_task(session, task, cascade=True)
     await session.commit()
+    return Response(status_code=204)
 
 
 @router.post("/{task_id}/rerun", response_model=TaskOut)

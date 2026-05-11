@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,12 +67,13 @@ async def get_project(
     return project
 
 
-@router.delete("/{project_id}", status_code=204)
+@router.delete("/{project_id}", status_code=204, response_class=Response)
 async def delete_project_api(
     project_id: uuid.UUID, session: AsyncSession = Depends(get_session)
-) -> None:
+) -> Response:
     project = await session.get(Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
     await do_delete_project(session, project)
     await session.commit()
+    return Response(status_code=204)

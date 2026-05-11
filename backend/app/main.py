@@ -13,7 +13,7 @@ from app.auth import AuthRedirect, get_current_user
 from app.config import get_settings
 from app.db import Base, engine
 from app.orchestrator.dispatcher import dispatcher
-from app.routes import auth, dashboard, projects, streams, tasks, workers
+from app.routes import auth, dashboard, projects, settings as settings_routes, streams, tasks, workers
 
 
 def _configure_logging() -> None:
@@ -100,6 +100,8 @@ app.include_router(projects.router, dependencies=_auth)
 app.include_router(tasks.router, dependencies=_auth)
 app.include_router(workers.http_router, dependencies=_auth)
 app.include_router(streams.router, dependencies=_auth)
+app.include_router(settings_routes.api_router, dependencies=_auth)
 
 # HTMX server-rendered views
 app.include_router(dashboard.router, dependencies=_auth)
+app.include_router(settings_routes.router, dependencies=_auth)

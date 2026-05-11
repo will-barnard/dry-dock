@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Settings — dry-dock{% endblock %}
+{% block content %}
+<nav class="text-sm text-slate-500 mb-4"><a href="/" class="hover:underline">Projects</a> / Settings</nav>
+
+<header class="flex items-baseline justify-between">
+  <h1 class="text-2xl font-semibold">Settings</h1>
+</header>
+
+<section class="mt-6 bg-white border border-slate-200 rounded p-4">
+  <h2 class="text-lg font-semibold">Models by role</h2>
+  <p class="text-sm text-slate-600 mt-1">
+    The dispatcher passes the chosen model to each worker when it grants a job.
+    A task's <span class="font-mono">preferred_model</span> always wins; everything
+    else uses these defaults. Available models are the ones currently installed
+    on at least one online worker in that role's pool.
+  </p>
+
+  <form method="post" action="/settings" class="mt-4 space-y-3">
+    <table class="w-full text-sm">
+      <thead class="text-xs uppercase tracking-wide text-slate-500">
+        <tr class="border-b border-slate-200">
+          <th class="text-left py-2 px-2">Role</th>
+          <th class="text-left py-2 px-2">Current model</th>
+          <th class="text-left py-2 px-2">Change to</th>
+          <th class="text-left py-2 px-2">Online workers</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr class="border-b border-slate-100 align-top">
+            <td class="py-3 px-2 font-mono">{{ row.role }}</td>
+            <td class="py-3 px-2 font-mono text-slate-700">{{ row.current }}</td>
+            <td class="py-3 px-2">
+              {% if row.available %}
+                <select name="model.{{ row.role }}" class="border border-slate-300 rounded px-2 py-1 font-mono text-xs">
+                  <option value="">— fall back to env default —</option>
+                  {% for m in row.available %}
+                    <option value="{{ m }}" {% if m == row.current %}selected{% endif %}>{{ m }}</option>
+                  {% endfor %}
+                </select>
+              {% else %}
+                <span class="text-slate-400 italic text-xs">No online workers in this pool. Start one to choose a model.</span>
+                <input type="hidden" name="model.{{ row.role }}" value="">
+              {% endif %}
+            </td>
+            <td class="py-3 px-2 text-xs">
+              {% if row.workers %}
+                <ul class="space-y-1">
+                  {% for w in row.workers %}
+                    <li>
+                      <span class="font-mono">{{ w.name }}</span>
+                      <span class="text-slate-500">· {{ w.ram_gb }}GB · ctx {{ w.max_context }}</span>
+                      {% if w.current_task_id %}
+                        <span class="text-amber-600">· busy</span>
+                      {% endif %}
+                      {% if w.installed_models %}
+                        <div class="text-slate-400 ml-2">{{ w.installed_models | join(', ') }}</div>
+                      {% endif %}
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% else %}
+                <span class="text-slate-400 italic">none</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="pt-3">
+      <button class="bg-slate-900 text-white text-sm font-medium px-4 py-2 rounded">Save assignments</button>
+    </div>
+  </form>
+</section>
+
+<section class="mt-6 bg-white border border-slate-200 rounded p-4">
+  <h2 class="text-lg font-semibold">Fallback chain</h2>
+  <ol class="mt-2 text-sm text-slate-700 list-decimal ml-5 space-y-1">
+    <li>Per-task <span class="font-mono">preferred_model</span> if set on the task.</li>
+    <li>Per-role assignment chosen above (saved to <span class="font-mono">app_settings</span>).</li>
+    <li>Backend env defaults: <span class="font-mono">DEFAULT_PLANNER_MODEL</span> for the planner role; <span class="font-mono">DEFAULT_CODE_MODEL</span> for every other role.</li>
+  </ol>
+</section>
+{% endblock %}

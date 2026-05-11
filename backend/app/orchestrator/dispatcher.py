@@ -20,6 +20,7 @@ from app.models import Project, Run, Task, TaskStatus
 from app.orchestrator.event_bus import bus
 from app.orchestrator.protocol import ClaimGrantMsg
 from app.orchestrator.router import select_worker_for_task
+from app.orchestrator.settings_service import get_role_model
 
 log = structlog.get_logger()
 
@@ -66,6 +67,11 @@ async def _dispatch_one_for_pool(pool: str) -> bool:
             session.add(run)
             await session.flush()
 
+            # If the task didn't specify a model, fall back to the role's
+            # configured default (stored in app_settings) — which itself falls
+            # back to the env-level DEFAULT_*_MODEL.
+            effective_model = task.preferred_model or await get_role_model(task.required_pool)
+
             grant = ClaimGrantMsg(
                 task_id=task.id,
                 run_id=run.id,
@@ -74,7 +80,7 @@ async def _dispatch_one_for_pool(pool: str) -> bool:
                 prompt=task.prompt,
                 required_pool=task.required_pool,
                 branch_name=task.branch_name,
-                preferred_model=task.preferred_model,
+                preferred_model=effective_model,
                 project={
                     "slug": project.slug,
                     "github_owner": project.github_owner,

@@ -67,6 +67,23 @@ def _uuid() -> uuid.UUID:
     return uuid.uuid4()
 
 
+class Setting(Base):
+    """Key/value app-wide settings.
+
+    Used for things that need to persist across deploys but aren't worth a
+    dedicated table — e.g. role→model assignments. Keys are namespaced with a
+    dotted prefix: 'role_model.coder', 'role_model.planner', etc.
+    """
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class User(Base):
     __tablename__ = "users"
 

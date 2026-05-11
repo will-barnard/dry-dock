@@ -17,6 +17,7 @@
     <a href="/" class="font-mono font-semibold tracking-tight text-lg">dry-dock</a>
     <nav class="text-sm flex items-center gap-4">
       <a href="/" class="hover:text-amber-300">Projects</a>
+      <a href="/settings" class="hover:text-amber-300">Settings</a>
       {% if user %}
         <span class="text-xs text-slate-400 font-mono hidden sm:inline">{{ user.name or user.email }}</span>
         <form method="post" action="/logout" class="m-0">

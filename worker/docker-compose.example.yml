@@ -29,3 +29,10 @@ services:
       - ./worktrees:/app/worktrees
     extra_hosts:
       - "host.docker.internal:host-gateway"
+      # If this worker runs on the SAME machine that hosts Beachhead /
+      # the orchestrator, uncomment the next line (replacing the hostname
+      # with your actual Beachhead domain) so the worker resolves the
+      # public hostname to the local Docker host instead of trying to
+      # hairpin out and back through your router. The TLS cert stays
+      # valid because the SNI/Host header is still the real hostname.
+      # - "drydock.your-domain.com:host-gateway"

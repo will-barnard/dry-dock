@@ -89,10 +89,19 @@ class GitWorkspace:
             dir=settings.worktree_root, prefix=_safe_prefix(self.repo)
         )
         self.path = Path(self._tmp.name) / "repo"
-        url = f"https://github.com/{self.owner}/{self.repo}.git"
+        # Use a credentialed URL when a token is available so we can clone
+        # private repos. Token in the URL is fine over HTTPS for ephemeral
+        # clones; git won't write it to ~/.netrc unless asked.
+        if settings.github_token:
+            user = settings.github_username or "x-access-token"
+            url = f"https://{user}:{settings.github_token}@github.com/{self.owner}/{self.repo}.git"
+        else:
+            url = f"https://github.com/{self.owner}/{self.repo}.git"
         code, _, err = await _run(["git", "clone", "--depth", "1", "--branch", self.default_branch, url, str(self.path)])
         if code != 0:
-            raise RuntimeError(f"git clone failed: {err}")
+            # Scrub the token from any error we surface upward.
+            safe_err = err.replace(settings.github_token, "***") if settings.github_token else err
+            raise RuntimeError(f"git clone failed: {safe_err}")
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:

@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     ollama_base_url: str = Field(default="http://host.docker.internal:11434", alias="OLLAMA_BASE_URL")
     default_model: str = Field(default="qwen2.5-coder:32b", alias="DEFAULT_MODEL")
 
+    # GitHub credential used by GitWorkspace.clone() for private repos.
+    # Reads-only is fine — workers never push. If left empty, clones fall
+    # back to unauthenticated and will only succeed for public repos.
+    github_token: str = Field(default="", alias="GITHUB_TOKEN")
+    github_username: str = Field(default="", alias="GITHUB_USERNAME")
+
     worktree_root: str = Field(default="/app/worktrees", alias="WORKTREE_ROOT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 

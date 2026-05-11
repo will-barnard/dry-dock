@@ -27,6 +27,8 @@ services:
       DEFAULT_MODEL: ${DEFAULT_MODEL:-qwen2.5-coder:32b}
       GPU_VRAM_GB: ${GPU_VRAM_GB:-0}
       GPU_MODEL: ${GPU_MODEL:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_USERNAME: ${GITHUB_USERNAME:-}
     volumes:
       # Per-worker host directory for ephemeral clones. Override in the .env
       # file with WORKTREE_HOST_DIR=/Volumes/FastSSD/dry-dock/<worker-name>

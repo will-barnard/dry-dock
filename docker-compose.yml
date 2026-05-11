@@ -27,6 +27,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://drydock:${DB_PASSWORD}@postgres:5432/drydock
       DATABASE_URL_SYNC: postgresql://drydock:${DB_PASSWORD}@postgres:5432/drydock
       WORKER_SHARED_SECRET: ${WORKER_SHARED_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_HTTPS_ONLY: ${SESSION_HTTPS_ONLY:-true}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       GITHUB_USERNAME: ${GITHUB_USERNAME}
       DRYDOCK_BASE_URL: ${DRYDOCK_BASE_URL}

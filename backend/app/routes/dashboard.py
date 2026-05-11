@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import get_current_user
 from app.db import get_session
 from app.models import (
     ApprovalGate,
@@ -22,6 +23,7 @@ from app.models import (
     Task,
     TaskKind,
     TaskStatus,
+    User,
     Worker,
 )
 from app.orchestrator.dispatcher import dispatcher
@@ -35,7 +37,11 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 @router.get("/", response_class=HTMLResponse)
-async def index(request: Request, session: AsyncSession = Depends(get_session)) -> HTMLResponse:
+async def index(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> HTMLResponse:
     projects = list((await session.execute(
         select(Project).order_by(Project.created_at.desc())
     )).scalars().all())
@@ -44,7 +50,7 @@ async def index(request: Request, session: AsyncSession = Depends(get_session)) 
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"projects": projects, "workers": workers, "live_count": len(live)},
+        {"user": user, "projects": projects, "workers": workers, "live_count": len(live)},
     )
 
 
@@ -82,7 +88,10 @@ async def create_project(
 
 @router.get("/projects/{project_id}", response_class=HTMLResponse)
 async def project_detail(
-    request: Request, project_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+    request: Request,
+    project_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     project = await session.get(Project, project_id)
     if not project:
@@ -100,6 +109,7 @@ async def project_detail(
         request,
         "project.html",
         {
+            "user": user,
             "project": project,
             "tasks": tasks,
             "pending_approvals": pending_approvals,
@@ -139,7 +149,10 @@ async def create_task_form(
 
 @router.get("/tasks/{task_id}", response_class=HTMLResponse)
 async def task_detail(
-    request: Request, task_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+    request: Request,
+    task_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
     task = await session.get(Task, task_id)
     if not task:
@@ -163,6 +176,7 @@ async def task_detail(
         request,
         "task.html",
         {
+            "user": user,
             "task": task,
             "project": project,
             "runs": runs,

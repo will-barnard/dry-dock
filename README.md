@@ -32,10 +32,12 @@ A FastAPI orchestrator on Beachhead coordinates specialized worker pools — pla
 2. In the Beachhead dashboard set these env vars (no Target Service so they land in `.env`):
    - `DB_PASSWORD` — any strong password
    - `WORKER_SHARED_SECRET` — any strong random string (workers present it on connect)
+   - `SESSION_SECRET` — any long random string used to sign the login cookie. If you rotate it, every existing browser session is invalidated. Generate with `openssl rand -hex 32`.
    - `GITHUB_TOKEN` — PAT with `repo` scope
    - `GITHUB_USERNAME` — your GitHub username
    - `DRYDOCK_BASE_URL` — e.g. `https://drydock.your-domain.com`
 3. Trigger a deploy.
+4. Open the public URL. The first visit redirects to `/setup`, which prompts you to create the admin account. Once that's done, `/setup` becomes inaccessible and every subsequent visit goes to `/login`.
 
 ## Quickstart (worker on a Mac)
 

@@ -112,6 +112,34 @@ human's call (we never auto-merge to `main`).
   events to the dashboard, where HTMX's `sse` extension swaps them into the
   log viewer in real time.
 
+## Authentication
+
+dry-dock is a single-tenant tool: one human owner (you), many workers.
+
+**Bootstrap flow.** On first boot the `users` table is empty. The auth
+dependency redirects every browser request to `/setup`, where you create the
+first admin account. `mark_users_exist()` flips a process-local flag so
+subsequent requests skip the count query, and `/setup` becomes inaccessible
+(any further visits redirect to `/login`).
+
+**Sessions** are signed cookies via Starlette `SessionMiddleware` — the
+user_id sits in the cookie payload, signed with `SESSION_SECRET`. No
+server-side session table. When we eventually run multiple orchestrator
+replicas we'll move to a DB-backed session store with the same dependency
+interface. `https_only=True` by default; flip to False only for local HTTP
+dev.
+
+**Worker auth is separate.** Workers connect to `/ws/worker?token=…` and
+present `WORKER_SHARED_SECRET`. That endpoint is NOT behind the user-session
+gate — it has its own check before `ws.accept()`. Two reasons: workers
+typically have no browser cookie store, and we want the two auth domains
+(operator login vs. machine credential) to be rotatable independently.
+
+**Password hashing** is bcrypt with cost factor 12 via the `bcrypt`
+package directly (no passlib). Minimum password length is 10 characters,
+enforced on the setup form. There's no password reset flow yet — the
+roadmap covers that.
+
 ## Nginx & Beachhead specifics
 
 `frontend/nginx.conf` uses Docker's embedded DNS resolver with a variable for

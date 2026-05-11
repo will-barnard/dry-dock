@@ -24,6 +24,15 @@ scaffold; everything else is work to do.
 
 Goal: a plan→code→review→merge cycle that runs cleanly without babysitting.
 
+- [ ] **Password reset / change-password flow.** Today the only way to recover
+  a lost admin password is a DB edit. Add `/account/password` to change it
+  while logged in, and a recovery path (email link or manual CLI command) for
+  the locked-out case.
+- [ ] **CSRF tokens** on state-changing form submissions. Starlette's
+  SessionMiddleware doesn't add them; `same_site=lax` covers most cases but
+  not all.
+- [ ] **Multiple users** with role distinctions (admin can add new users; non-admins can dispatch tasks but not change project policy).
+
 - [ ] **Retry hardening.** Today a failed task re-queues up to `max_attempts`
   times with no backoff and no context about why it failed. Add (a) exponential
   backoff via a `scheduled_at` column, (b) including the previous failure's

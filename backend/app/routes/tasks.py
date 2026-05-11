@@ -115,6 +115,25 @@ async def delete_task_api(
     return Response(status_code=204)
 
 
+@router.post("/{task_id}/enqueue", response_model=TaskOut)
+async def enqueue_task(
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> Task:
+    """Manually advance a PENDING task to QUEUED."""
+    task = await session.get(Task, task_id)
+    if not task or task.project_id != project_id:
+        raise HTTPException(404, "task not found")
+    if task.status != TaskStatus.PENDING:
+        raise HTTPException(409, f"task is {task.status.value}, not pending")
+    task.status = TaskStatus.QUEUED
+    await session.commit()
+    await session.refresh(task)
+    dispatcher.poke()
+    return task
+
+
 @router.post("/{task_id}/rerun", response_model=TaskOut)
 async def rerun_task_api(
     project_id: uuid.UUID, task_id: uuid.UUID, session: AsyncSession = Depends(get_session)

@@ -231,6 +231,23 @@ async def delete_task_form(
     return RedirectResponse(f"/projects/{project_id}", status_code=303)
 
 
+@router.post("/tasks/{task_id}/enqueue", response_class=HTMLResponse)
+async def enqueue_task_form(
+    task_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    task = await session.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "task not found")
+    if task.status != TaskStatus.PENDING:
+        raise HTTPException(409, f"task is {task.status.value}, not pending")
+    task.status = TaskStatus.QUEUED
+    await session.commit()
+    dispatcher.poke()
+    return RedirectResponse(f"/tasks/{task_id}", status_code=303)
+
+
 @router.post("/tasks/{task_id}/rerun", response_class=HTMLResponse)
 async def rerun_task_form(
     task_id: uuid.UUID,

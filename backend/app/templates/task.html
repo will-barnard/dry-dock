@@ -27,6 +27,14 @@
 
 {# Action row — buttons appear only when the task is in a state where they make sense. #}
 <section class="mt-4 flex flex-wrap items-center gap-2 text-xs">
+  {% if task.status.value == 'pending' %}
+    <form method="post" action="/tasks/{{ task.id }}/enqueue" class="m-0">
+      <button class="px-3 py-1.5 rounded bg-violet-50 hover:bg-violet-100 text-violet-700 border border-violet-200 font-medium">
+        Enqueue now
+      </button>
+    </form>
+  {% endif %}
+
   {% if task.status.value in ('failed', 'rejected', 'cancelled') %}
     <form method="post" action="/tasks/{{ task.id }}/rerun" class="m-0">
       <button class="px-3 py-1.5 rounded bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-medium">

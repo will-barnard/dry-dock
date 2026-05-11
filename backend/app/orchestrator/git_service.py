@@ -17,6 +17,7 @@ import structlog
 
 from app.config import get_settings
 from app.models import Project, Task
+from app.util.github import normalize_owner_repo
 
 log = structlog.get_logger()
 
@@ -26,14 +27,26 @@ def _repo_dir(project: Project) -> Path:
     return Path(settings.repo_cache_dir) / project.slug
 
 
+def _normalized_pair(project: Project) -> tuple[str, str]:
+    """Heal any project row where the full URL ended up in `github_repo`. The
+    project create form now prevents this, but rows from earlier deploys can
+    still be wrong, and silently building a clone URL on top of them produces
+    things like https://github.com/owner/https://github.com/owner/repo.git."""
+    parsed = normalize_owner_repo(project.github_owner, project.github_repo)
+    if parsed is None:
+        return project.github_owner, project.github_repo
+    return parsed
+
+
 def _authed_url(project: Project) -> str:
     settings = get_settings()
     token = settings.github_token
     user = settings.github_username or "x-access-token"
+    owner, repo = _normalized_pair(project)
     if not token:
         # Fall back to anonymous — clone will work for public repos but push won't.
-        return f"https://github.com/{project.github_owner}/{project.github_repo}.git"
-    return f"https://{user}:{token}@github.com/{project.github_owner}/{project.github_repo}.git"
+        return f"https://github.com/{owner}/{repo}.git"
+    return f"https://{user}:{token}@github.com/{owner}/{repo}.git"
 
 
 async def _run(cmd: list[str], cwd: Path | None = None) -> tuple[int, str, str]:

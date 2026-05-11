@@ -22,18 +22,35 @@ log = structlog.get_logger()
 
 _PREFIX_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
 
+# Same parse rules the backend uses on project create — duplicated here so the
+# worker can self-heal if the orchestrator hands it a project row where the
+# full URL was stuffed into the `repo` field (early bad data, copy-paste
+# errors). If the repo string looks URL-y we extract owner/repo from it and
+# override the passed-in owner.
+_GH_REF_RE = re.compile(
+    r"^(?:https?://github\.com/|git@github\.com:|git://github\.com/)?"
+    r"(?P<owner>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"
+    r"/"
+    r"(?P<repo>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"
+    r"(?:\.git)?/?$"
+)
+
 
 def _safe_prefix(value: str) -> str:
-    """Make a string safe to pass as tempfile prefix.
-
-    tempfile.TemporaryDirectory treats the prefix as part of the resulting
-    directory name, so any path separators (/, :, \\) cause it to try to
-    create a non-existent parent directory and fail with ENOENT. We saw this
-    when a project's `github_repo` field accidentally contained the full URL.
-    """
+    """Make a string safe to pass as tempfile prefix."""
     cleaned = _PREFIX_SAFE_RE.sub("_", value or "")
-    # Keep it short — tempfile suffixes a random tag of its own.
     return (cleaned[:48] or "repo") + "-"
+
+
+def _normalize_ref(owner: str, repo: str) -> tuple[str, str]:
+    """If `repo` looks like a URL or owner/repo path, parse it and let the
+    parsed values win over the passed-in `owner`. Otherwise return as-is."""
+    raw = (repo or "").strip()
+    if "/" in raw or ":" in raw:
+        m = _GH_REF_RE.match(raw)
+        if m:
+            return m.group("owner"), m.group("repo")
+    return owner, repo
 
 
 async def _run(cmd: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
@@ -52,8 +69,15 @@ class GitWorkspace:
     """Context manager: clone the repo for the duration of one job."""
 
     def __init__(self, github_owner: str, github_repo: str, default_branch: str) -> None:
-        self.owner = github_owner
-        self.repo = github_repo
+        owner, repo = _normalize_ref(github_owner, github_repo)
+        if (owner, repo) != (github_owner, github_repo):
+            log.warning(
+                "git_workspace.normalized_ref",
+                from_owner=github_owner, from_repo=github_repo,
+                to_owner=owner, to_repo=repo,
+            )
+        self.owner = owner
+        self.repo = repo
         self.default_branch = default_branch
         self.path: Path | None = None
         self._tmp: tempfile.TemporaryDirectory | None = None

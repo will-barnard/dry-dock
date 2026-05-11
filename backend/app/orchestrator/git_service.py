@@ -132,7 +132,11 @@ def _fix_section(section: list[str], repo: "Path | None" = None) -> list[str]:
             in_hunk = True
             out.append(line)
         elif line.startswith("--- "):
-            if inferred_new:
+            # For any new-file section (marker or inferred) git requires
+            # "--- /dev/null".  Keeping "--- a/path" causes git to look up
+            # the path in the index, find context lines, and reject the patch
+            # with "depends on old contents".
+            if is_new_file:
                 out.append("--- /dev/null\n")
             else:
                 out.append(line)

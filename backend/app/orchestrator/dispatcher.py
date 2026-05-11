@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import SessionLocal
 from app.models import Project, Run, Task, TaskStatus
 from app.orchestrator.event_bus import bus
+from app.orchestrator.pools import KNOWN_POOLS
 from app.orchestrator.protocol import ClaimGrantMsg
 from app.orchestrator.router import select_worker_for_task
 from app.orchestrator.settings_service import get_role_model
@@ -112,10 +113,6 @@ async def _dispatch_one_for_pool(pool: str) -> bool:
         )
         log.info("dispatch.granted", task=str(task.id), pool=pool, worker=worker.name)
         return True
-
-
-# Pool names we know about. Workers register into one of these.
-KNOWN_POOLS = ("planner", "coder", "reviewer", "tester", "refactorer", "docs", "researcher")
 
 
 class Dispatcher:

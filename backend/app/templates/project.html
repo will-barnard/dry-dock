@@ -34,12 +34,12 @@
         class="bg-white border border-slate-200 rounded p-4 space-y-3 lg:col-span-1">
     <h2 class="text-lg font-semibold">Dispatch task</h2>
     <label class="text-sm block">kind
-      <select name="kind" class="w-full mt-1 border border-slate-300 rounded px-2 py-1">
+      <select name="kind" id="task-kind" class="w-full mt-1 border border-slate-300 rounded px-2 py-1">
         {% for k in task_kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
       </select>
-    </label>
-    <label class="text-sm block">required pool
-      <input name="required_pool" value="coder" class="w-full mt-1 border border-slate-300 rounded px-2 py-1 font-mono text-sm">
+      <span class="text-xs text-slate-500 mt-1 block">
+        The pool is derived from the kind unless you override it below.
+      </span>
     </label>
     <label class="text-sm block">title
       <input name="title" required class="w-full mt-1 border border-slate-300 rounded px-2 py-1">
@@ -47,9 +47,17 @@
     <label class="text-sm block">prompt
       <textarea name="prompt" required rows="6" class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm font-mono"></textarea>
     </label>
-    <label class="text-sm block">preferred model (optional)
-      <input name="preferred_model" placeholder="qwen2.5-coder:32b" class="w-full mt-1 border border-slate-300 rounded px-2 py-1 font-mono text-sm">
-    </label>
+    <details class="text-sm">
+      <summary class="cursor-pointer text-slate-600">Advanced</summary>
+      <div class="space-y-2 mt-2">
+        <label class="text-sm block">required pool <span class="text-slate-400">(blank = derive from kind)</span>
+          <input name="required_pool" placeholder="(auto)" class="w-full mt-1 border border-slate-300 rounded px-2 py-1 font-mono text-sm">
+        </label>
+        <label class="text-sm block">preferred model <span class="text-slate-400">(blank = role default from Settings)</span>
+          <input name="preferred_model" placeholder="qwen2.5-coder:32b" class="w-full mt-1 border border-slate-300 rounded px-2 py-1 font-mono text-sm">
+        </label>
+      </div>
+    </details>
     <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded">Dispatch</button>
   </form>
 

@@ -28,7 +28,9 @@ from app.models import (
 )
 from app.orchestrator.dispatcher import dispatcher
 from app.orchestrator.planner import materialize_plan
+from app.orchestrator.pools import pool_for_kind
 from app.orchestrator.registry import registry
+from app.util.github import normalize_owner_repo, parse_github_ref
 
 router = APIRouter()
 
@@ -59,22 +61,31 @@ async def create_project(
     request: Request,
     slug: str = Form(...),
     name: str = Form(...),
-    github_owner: str = Form(...),
-    github_repo: str = Form(...),
+    github_url: str = Form(...),
     default_branch: str = Form("main"),
     system_prompt: str = Form(""),
     auto_approve_plans: bool = Form(False),
     auto_approve_merges: bool = Form(False),
     session: AsyncSession = Depends(get_session),
 ):
+    # Accept any of: owner/repo, https://github.com/owner/repo[.git],
+    # git@github.com:owner/repo.git — parse into separate fields.
+    parsed = parse_github_ref(github_url)
+    if not parsed:
+        raise HTTPException(
+            400,
+            "Couldn't parse GitHub repo. Try `owner/repo` or a full GitHub URL.",
+        )
+    owner, repo = parsed
+
     existing = await session.execute(select(Project).where(Project.slug == slug))
     if existing.scalar_one_or_none():
         raise HTTPException(409, "slug already exists")
     project = Project(
         slug=slug,
         name=name,
-        github_owner=github_owner,
-        github_repo=github_repo,
+        github_owner=owner,
+        github_repo=repo,
         default_branch=default_branch,
         system_prompt=system_prompt or None,
         auto_approve_plans=auto_approve_plans,
@@ -125,19 +136,24 @@ async def create_task_form(
     kind: str = Form(...),
     title: str = Form(...),
     prompt: str = Form(...),
-    required_pool: str = Form(...),
+    required_pool: str = Form(""),
     preferred_model: str = Form(""),
     session: AsyncSession = Depends(get_session),
 ):
     project = await session.get(Project, project_id)
     if not project:
         raise HTTPException(404, "project not found")
+    task_kind = TaskKind(kind)
+    # Empty required_pool means "use the canonical pool for this kind". This
+    # is what most users want; the field stays available for the rare case
+    # where you want to route a, say, code task to the reviewer pool.
+    pool = (required_pool or "").strip() or pool_for_kind(task_kind)
     task = Task(
         project_id=project_id,
-        kind=TaskKind(kind),
+        kind=task_kind,
         title=title,
         prompt=prompt,
-        required_pool=required_pool,
+        required_pool=pool,
         preferred_model=preferred_model or None,
         status=TaskStatus.QUEUED,
     )

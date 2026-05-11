@@ -11,6 +11,7 @@ from app.db import get_session
 from app.models import Project
 from app.orchestrator.git_service import ensure_clone
 from app.schemas import ProjectCreate, ProjectOut
+from app.util.github import normalize_owner_repo
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -25,10 +26,24 @@ async def list_projects(session: AsyncSession = Depends(get_session)) -> list[Pr
 async def create_project(
     body: ProjectCreate, session: AsyncSession = Depends(get_session)
 ) -> Project:
+    # Accept any of the common ways callers might paste a GitHub ref. Same
+    # parser the HTMX form uses — keeps behavior aligned across surfaces.
+    parsed = normalize_owner_repo(body.github_owner, body.github_repo)
+    if not parsed:
+        raise HTTPException(
+            400,
+            "github_owner/github_repo couldn't be parsed. Pass owner+repo "
+            "separately or a full GitHub URL in github_repo.",
+        )
+    owner, repo = parsed
+
     exists = await session.execute(select(Project).where(Project.slug == body.slug))
     if exists.scalar_one_or_none():
         raise HTTPException(409, "project slug already exists")
-    project = Project(**body.model_dump())
+    data = body.model_dump()
+    data["github_owner"] = owner
+    data["github_repo"] = repo
+    project = Project(**data)
     session.add(project)
     await session.commit()
     await session.refresh(project)

@@ -45,7 +45,8 @@ class TaskCreate(BaseModel):
     kind: TaskKind
     title: str
     prompt: str
-    required_pool: str
+    # Optional — when omitted, the canonical pool for `kind` is used.
+    required_pool: str = ""
     parent_task_id: uuid.UUID | None = None
     priority: int = 100
     min_ram_gb: int = 0

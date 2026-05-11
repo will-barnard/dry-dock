@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -17,6 +18,22 @@ import structlog
 from app.config import get_settings
 
 log = structlog.get_logger()
+
+
+_PREFIX_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _safe_prefix(value: str) -> str:
+    """Make a string safe to pass as tempfile prefix.
+
+    tempfile.TemporaryDirectory treats the prefix as part of the resulting
+    directory name, so any path separators (/, :, \\) cause it to try to
+    create a non-existent parent directory and fail with ENOENT. We saw this
+    when a project's `github_repo` field accidentally contained the full URL.
+    """
+    cleaned = _PREFIX_SAFE_RE.sub("_", value or "")
+    # Keep it short — tempfile suffixes a random tag of its own.
+    return (cleaned[:48] or "repo") + "-"
 
 
 async def _run(cmd: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
@@ -44,7 +61,9 @@ class GitWorkspace:
     async def __aenter__(self) -> "GitWorkspace":
         settings = get_settings()
         Path(settings.worktree_root).mkdir(parents=True, exist_ok=True)
-        self._tmp = tempfile.TemporaryDirectory(dir=settings.worktree_root, prefix=f"{self.repo}-")
+        self._tmp = tempfile.TemporaryDirectory(
+            dir=settings.worktree_root, prefix=_safe_prefix(self.repo)
+        )
         self.path = Path(self._tmp.name) / "repo"
         url = f"https://github.com/{self.owner}/{self.repo}.git"
         code, _, err = await _run(["git", "clone", "--depth", "1", "--branch", self.default_branch, url, str(self.path)])

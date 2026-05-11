@@ -20,19 +20,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Artifact, Task, TaskKind, TaskStatus
+from app.orchestrator.pools import KIND_TO_POOL
 
 log = structlog.get_logger()
-
-
-_KIND_TO_POOL = {
-    TaskKind.PLAN: "planner",
-    TaskKind.CODE: "coder",
-    TaskKind.REVIEW: "reviewer",
-    TaskKind.TEST: "tester",
-    TaskKind.REFACTOR: "refactorer",
-    TaskKind.DOCS: "docs",
-    TaskKind.RESEARCH: "researcher",
-}
 
 
 async def materialize_plan(session: AsyncSession, plan_task: Task) -> list[Task]:
@@ -65,7 +55,7 @@ async def materialize_plan(session: AsyncSession, plan_task: Task) -> list[Task]
             log.warning("planner.bad_kind", entry=entry)
             continue
 
-        pool = entry.get("required_pool") or _KIND_TO_POOL[kind]
+        pool = entry.get("required_pool") or KIND_TO_POOL[kind]
         depends_on = entry.get("depends_on")
         parent_id: uuid.UUID | None = plan_task.id
         if isinstance(depends_on, int) and depends_on in id_by_index:

@@ -21,6 +21,7 @@ from app.models import (
 from app.orchestrator.dispatcher import dispatcher
 from app.orchestrator.event_bus import bus
 from app.orchestrator.planner import materialize_plan
+from app.orchestrator.pools import pool_for_kind
 from app.schemas import (
     ApprovalDecision,
     ApprovalGateOut,
@@ -54,6 +55,9 @@ async def create_task(
     if not project:
         raise HTTPException(404, "project not found")
 
+    # Empty `required_pool` means "use the canonical pool for this kind".
+    required_pool = (body.required_pool or "").strip() or pool_for_kind(body.kind)
+
     # Top-level user-created tasks queue immediately if the project allows it
     # for that kind; planner tasks always go through approval first when gated.
     starts_queued = True
@@ -64,7 +68,7 @@ async def create_task(
         kind=body.kind,
         title=body.title,
         prompt=body.prompt,
-        required_pool=body.required_pool,
+        required_pool=required_pool,
         parent_task_id=body.parent_task_id,
         priority=body.priority,
         min_ram_gb=body.min_ram_gb,

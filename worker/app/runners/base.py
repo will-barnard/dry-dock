@@ -237,13 +237,20 @@ class ApplyError(RuntimeError):
 
 def apply_search_replace_blocks(
     ws: GitWorkspace, blocks: list[tuple[str, str, str]]
-) -> list[str]:
-    """Apply each block in order to the worktree. Returns the modified files.
+) -> tuple[list[str], list[str]]:
+    """Apply each block in order to the worktree.
+
+    Returns ``(modified_files, warnings)``. The warnings list is non-fatal
+    feedback the runner should surface in its log — typically "the model
+    asked to create a file that already exists; treated as overwrite". This
+    keeps tasks moving when the model didn't see the file's current state
+    (a common failure mode for files not picked by the relevance heuristic).
 
     Rules:
-      - Empty SEARCH ⇒ create the file (parent dirs included). If the file
-        already exists, append? No — error. SR is for edits or net-new files,
-        and silent-overwrite would mask bugs.
+      - Empty SEARCH on a non-existing path ⇒ create the file.
+      - Empty SEARCH on an EXISTING path ⇒ full-file overwrite + warning.
+        The diff git emits will show exactly what changed, so the user has
+        a complete audit trail.
       - Empty REPLACE with non-empty SEARCH that matches the entire file
         contents ⇒ delete the file.
       - Empty REPLACE in general ⇒ replace the matched span with nothing.
@@ -252,15 +259,20 @@ def apply_search_replace_blocks(
     """
     assert ws.path is not None
     modified: list[str] = []
+    warnings: list[str] = []
     for filename, search, replace in blocks:
         rel = filename.lstrip("./")
         path = ws.path / rel
         if not search.strip():
             if path.exists():
-                raise ApplyError(
-                    f"empty SEARCH for {rel!r}, but the file already exists"
+                # Model thought it was creating; the file was already there.
+                # Treat as a full-file overwrite and warn loudly.
+                warnings.append(
+                    f"{rel}: model emitted empty SEARCH (intended create) but "
+                    f"the file already existed — applied as full overwrite"
                 )
-            path.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(replace, encoding="utf-8")
             modified.append(rel)
             continue
@@ -297,10 +309,53 @@ def apply_search_replace_blocks(
 
         path.write_text(current.replace(search, replace, 1), encoding="utf-8")
         modified.append(rel)
-    return modified
+    return modified, warnings
 
 
 # ── Relevant-file selection for the user prompt ──────────────────────
+
+
+# Filenames or filename patterns that almost any code task touches. These get
+# auto-included whether or not the task prompt mentions them by name, so the
+# model always sees the project's current configuration and won't "create"
+# a config file that already exists.
+_ALWAYS_INCLUDE_BASENAMES = {
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "tsconfig.json",
+    "jsconfig.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "setup.py",
+    "setup.cfg",
+    "Cargo.toml",
+    "go.mod",
+    "Gemfile",
+    "Makefile",
+    "README.md",
+    ".eslintrc",
+    ".eslintrc.js",
+    ".eslintrc.json",
+    ".prettierrc",
+    ".gitignore",
+    "Dockerfile",
+    "docker-compose.yml",
+}
+
+# Substrings/suffixes that mark a file as configuration. Filenames whose
+# basename ends with `.config.js`, `.config.ts`, etc. count as config.
+_CONFIG_SUFFIXES = (".config.js", ".config.ts", ".config.cjs", ".config.mjs",
+                    ".config.json", ".config.yaml", ".config.yml")
+
+
+def _is_config_file(path: str) -> bool:
+    import os as _os
+    base = _os.path.basename(path)
+    if base in _ALWAYS_INCLUDE_BASENAMES:
+        return True
+    return any(base.endswith(suffix) for suffix in _CONFIG_SUFFIXES)
 
 
 def relevant_files_for_prompt(
@@ -309,34 +364,44 @@ def relevant_files_for_prompt(
     """Pick files most likely to be touched by a task, by lightweight matching.
 
     Strategy:
-      1. Filenames mentioned literally in the task prompt (full path or
-         basename) win — those are almost always the right ones.
-      2. Failing that, return a small set of top-level project files
-         (likely entry points), excluding tests and hidden paths.
+      1. Always include obvious configuration files (vue.config.js,
+         package.json, tsconfig.json, pyproject.toml, …) that exist in the
+         repo, since every code task tends to be sensitive to them.
+      2. Add filenames mentioned literally in the task prompt (full path or
+         basename).
+      3. Fill the remaining slots with top-level project files (likely entry
+         points), excluding tests and hidden paths.
 
     Capped at `max_files`. The caller is expected to also cap the per-file
     byte size when stitching contents into the prompt.
     """
     import os as _os
 
+    config_files = [f for f in all_files if _is_config_file(f)]
+
     mentioned: list[str] = []
     for f in all_files:
+        if f in config_files:
+            continue
         base = _os.path.basename(f)
-        # Avoid trivial matches like 'a' or '.py'
         if len(base) < 3:
             continue
         if f in prompt or base in prompt:
             mentioned.append(f)
-    if mentioned:
-        return mentioned[:max_files]
 
     interesting = [
         f for f in all_files
-        if f.count("/") <= 1
+        if f not in config_files
+        and f not in mentioned
+        and f.count("/") <= 1
         and not f.startswith(".")
         and not any(p in f.lower() for p in ("test_", "_test.", "/tests/", "/test/"))
     ]
-    return interesting[:max_files]
+
+    # Order: configs first (always-on awareness), then explicit mentions,
+    # then top-level fillers. Dedupe preserves order.
+    ordered = list(dict.fromkeys(config_files + mentioned + interesting))
+    return ordered[:max_files]
 
 
 def render_file_contents(

@@ -65,10 +65,12 @@ class DocsRunner(BaseRunner):
             blocks = extract_search_replace_blocks(response_text)
             if blocks:
                 try:
-                    modified = apply_search_replace_blocks(self._ws, blocks)
+                    modified, warnings = apply_search_replace_blocks(self._ws, blocks)
                 except ApplyError as exc:
                     await self.ctx.emit_log("stderr", f"SR apply failed: {exc}")
                     return RunnerResult(success=False, summary=f"docs: {exc}")
+                for w in warnings:
+                    await self.ctx.emit_log("stderr", f"warning: {w}")
 
                 diff = await self._ws.diff()
                 if not diff.strip():

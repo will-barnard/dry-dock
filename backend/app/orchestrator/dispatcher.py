@@ -72,6 +72,8 @@ async def _dispatch_one_for_pool(pool: str) -> bool:
                 worker_name=worker.name,
                 model_used=effective_model,
             )
+            session.add(run)
+            await session.flush()
 
             grant = ClaimGrantMsg(
                 task_id=task.id,

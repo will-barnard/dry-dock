@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} — dry-dock{% endblock %}
+{% block content %}
+<nav class="text-sm text-slate-500 mb-4"><a href="/" class="hover:underline">Projects</a> / {{ project.slug }}</nav>
+
+<header class="flex items-baseline justify-between">
+  <div>
+    <h1 class="text-2xl font-semibold">{{ project.name }}</h1>
+    <div class="text-sm text-slate-500 font-mono">{{ project.github_owner }}/{{ project.github_repo }} ({{ project.default_branch }})</div>
+  </div>
+  <div class="text-xs text-slate-500 space-x-2">
+    <span class="px-2 py-1 rounded {% if project.auto_approve_plans %}bg-amber-100 text-amber-700{% else %}bg-slate-100{% endif %}">plans: {{ 'auto' if project.auto_approve_plans else 'gated' }}</span>
+    <span class="px-2 py-1 rounded {% if project.auto_approve_merges %}bg-amber-100 text-amber-700{% else %}bg-slate-100{% endif %}">merges: {{ 'auto' if project.auto_approve_merges else 'gated' }}</span>
+  </div>
+</header>
+
+{% if pending_approvals %}
+<section class="mt-6 bg-amber-50 border border-amber-200 rounded p-4">
+  <h2 class="font-semibold text-amber-900">Awaiting your approval ({{ pending_approvals|length }})</h2>
+  <ul class="mt-3 space-y-2">
+    {% for a in pending_approvals %}
+      <li>
+        <a href="/tasks/{{ a.task_id }}" class="text-amber-900 hover:underline font-mono text-sm">
+          [{{ a.kind.value }}] task {{ a.task_id }}
+        </a>
+      </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+  <form method="post" action="/projects/{{ project.id }}/tasks"
+        class="bg-white border border-slate-200 rounded p-4 space-y-3 lg:col-span-1">
+    <h2 class="text-lg font-semibold">Dispatch task</h2>
+    <label class="text-sm block">kind
+      <select name="kind" class="w-full mt-1 border border-slate-300 rounded px-2 py-1">
+        {% for k in task_kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="text-sm block">required pool
+      <input name="required_pool" value="coder" class="w-full mt-1 border border-slate-300 rounded px-2 py-1 font-mono text-sm">
+    </label>
+    <label class="text-sm block">title
+      <input name="title" required class="w-full mt-1 border border-slate-300 rounded px-2 py-1">
+    </label>
+    <label class="text-sm block">prompt
+      <textarea name="prompt" required rows="6" class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm font-mono"></textarea>
+    </label>
+    <label class="text-sm block">preferred model (optional)
+      <input name="preferred_model" placeholder="qwen2.5-coder:32b" class="w-full mt-1 border border-slate-300 rounded px-2 py-1 font-mono text-sm">
+    </label>
+    <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded">Dispatch</button>
+  </form>
+
+  <div class="lg:col-span-2">
+    <h2 class="text-lg font-semibold mb-2">Tasks</h2>
+    <div class="space-y-2">
+      {% for t in tasks %}
+        <a href="/tasks/{{ t.id }}" class="block bg-white border border-slate-200 rounded px-4 py-3 hover:border-slate-400">
+          <div class="flex items-baseline justify-between">
+            <div>
+              <div class="font-medium">{{ t.title }}</div>
+              <div class="text-xs text-slate-500 font-mono">{{ t.kind.value }} · pool: {{ t.required_pool }}</div>
+            </div>
+            <span class="text-xs px-2 py-0.5 rounded
+              {% if t.status.value == 'succeeded' %}bg-emerald-100 text-emerald-700
+              {% elif t.status.value == 'failed' or t.status.value == 'rejected' %}bg-rose-100 text-rose-700
+              {% elif t.status.value == 'awaiting_approval' %}bg-amber-100 text-amber-700
+              {% elif t.status.value == 'running' or t.status.value == 'claimed' %}bg-sky-100 text-sky-700
+              {% else %}bg-slate-100 text-slate-700{% endif %}">{{ t.status.value }}</span>
+          </div>
+        </a>
+      {% else %}
+        <div class="text-slate-500 italic">No tasks yet. Dispatch one to get started.</div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}

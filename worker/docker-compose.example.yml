@@ -1,0 +1,31 @@
+# Drop this on a Mac (mac mini, MacBook, etc.) to run a dry-dock worker.
+# Ollama is expected to be installed on the host (brew install ollama && ollama serve).
+# Worker container reaches the host's Ollama via host.docker.internal.
+#
+#   cp .env.example .env  # then fill in
+#   docker compose up -d
+#
+# To run multiple worker pools on the same machine (e.g. the MacBook serving
+# both 'coder' and 'planner'), copy this file twice and change WORKER_NAME and
+# WORKER_POOL per service.
+
+services:
+  worker:
+    build:
+      context: .
+    image: drydock-worker:latest
+    restart: unless-stopped
+    environment:
+      ORCHESTRATOR_URL: ${ORCHESTRATOR_URL}          # e.g. wss://drydock.example.com/ws/worker
+      WORKER_SHARED_SECRET: ${WORKER_SHARED_SECRET}
+      WORKER_NAME: ${WORKER_NAME}                    # e.g. macbook-coder-1
+      WORKER_POOL: ${WORKER_POOL}                    # planner | coder | reviewer | tester | refactorer | docs | researcher
+      HARDWARE_CLASS: ${HARDWARE_CLASS}              # macbook | mac-mini | linux
+      RAM_GB: ${RAM_GB}                              # advertised RAM
+      MAX_CONTEXT: ${MAX_CONTEXT}                    # advertised max context tokens
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-qwen2.5-coder:32b}
+    volumes:
+      - ./worktrees:/app/worktrees
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

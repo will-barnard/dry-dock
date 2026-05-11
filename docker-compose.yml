@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: drydock
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: drydock
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U drydock -d drydock"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - internal
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://drydock:${DB_PASSWORD}@postgres:5432/drydock
+      DATABASE_URL_SYNC: postgresql://drydock:${DB_PASSWORD}@postgres:5432/drydock
+      WORKER_SHARED_SECRET: ${WORKER_SHARED_SECRET}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_USERNAME: ${GITHUB_USERNAME}
+      DRYDOCK_BASE_URL: ${DRYDOCK_BASE_URL}
+      DEFAULT_CODE_MODEL: qwen2.5-coder:32b
+      DEFAULT_PLANNER_MODEL: qwen2.5-coder:32b
+      LOG_LEVEL: INFO
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - repos_data:/var/lib/drydock/repos
+    networks:
+      - internal
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    depends_on:
+      - backend
+    networks:
+      - internal
+
+volumes:
+  postgres_data:
+    name: dry-dock-postgres
+  repos_data:
+    name: dry-dock-repos
+
+networks:
+  internal:
+    driver: bridge

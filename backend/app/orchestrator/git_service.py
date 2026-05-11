@@ -1,0 +1,137 @@
+"""Git operations on the orchestrator side.
+
+Workers send back unified patches (or full file replacements); the orchestrator
+is responsible for keeping a cached clone of each project repo, applying the
+patch on a task branch, pushing to origin, and (optionally) opening a PR via
+the GitHub API. Workers never push directly.
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+import shutil
+from pathlib import Path
+
+import httpx
+import structlog
+
+from app.config import get_settings
+from app.models import Project, Task
+
+log = structlog.get_logger()
+
+
+def _repo_dir(project: Project) -> Path:
+    settings = get_settings()
+    return Path(settings.repo_cache_dir) / project.slug
+
+
+def _authed_url(project: Project) -> str:
+    settings = get_settings()
+    token = settings.github_token
+    user = settings.github_username or "x-access-token"
+    if not token:
+        # Fall back to anonymous — clone will work for public repos but push won't.
+        return f"https://github.com/{project.github_owner}/{project.github_repo}.git"
+    return f"https://{user}:{token}@github.com/{project.github_owner}/{project.github_repo}.git"
+
+
+async def _run(cmd: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=str(cwd) if cwd else None,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+    stdout, stderr = await proc.communicate()
+    return proc.returncode or 0, stdout.decode(errors="replace"), stderr.decode(errors="replace")
+
+
+async def ensure_clone(project: Project) -> Path:
+    """Ensure the project repo is cloned locally and up to date with origin."""
+    target = _repo_dir(project)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if not (target / ".git").exists():
+        log.info("git.clone", project=project.slug)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            shutil.rmtree(target)
+        code, out, err = await _run(["git", "clone", _authed_url(project), str(target)])
+        if code != 0:
+            raise RuntimeError(f"git clone failed: {err}")
+    else:
+        await _run(["git", "remote", "set-url", "origin", _authed_url(project)], cwd=target)
+        code, out, err = await _run(["git", "fetch", "--prune", "origin"], cwd=target)
+        if code != 0:
+            log.warning("git.fetch_failed", project=project.slug, err=err)
+    return target
+
+
+async def branch_name_for_task(task: Task) -> str:
+    return task.branch_name or f"agent/{task.id}"
+
+
+async def apply_patch_and_push(project: Project, task: Task, patch: str) -> str:
+    """Apply a unified diff on top of the project's default branch on a task
+    branch, then push. Returns the branch name."""
+    repo = await ensure_clone(project)
+    branch = await branch_name_for_task(task)
+
+    # Reset to a clean state on default branch, then create the agent branch.
+    await _run(["git", "fetch", "origin", project.default_branch], cwd=repo)
+    await _run(["git", "checkout", "-f", project.default_branch], cwd=repo)
+    await _run(["git", "reset", "--hard", f"origin/{project.default_branch}"], cwd=repo)
+    await _run(["git", "checkout", "-B", branch], cwd=repo)
+
+    # Apply patch from stdin.
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "apply",
+        "--whitespace=nowarn",
+        "--index",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=str(repo),
+    )
+    stdout, stderr = await proc.communicate(patch.encode())
+    if proc.returncode != 0:
+        raise RuntimeError(f"git apply failed: {stderr.decode(errors='replace')}")
+
+    await _run(
+        ["git", "-c", "user.email=bot@dry-dock", "-c", "user.name=dry-dock",
+         "commit", "-m", f"agent: {task.title}\n\nTask {task.id}"],
+        cwd=repo,
+    )
+    code, out, err = await _run(["git", "push", "-u", "origin", branch, "--force-with-lease"], cwd=repo)
+    if code != 0:
+        raise RuntimeError(f"git push failed: {err}")
+
+    return branch
+
+
+async def open_pull_request(project: Project, task: Task, branch: str, body: str) -> str | None:
+    """Open a PR from `branch` to the project's default branch. Returns PR URL or None."""
+    settings = get_settings()
+    if not settings.github_token:
+        return None
+    url = f"https://api.github.com/repos/{project.github_owner}/{project.github_repo}/pulls"
+    payload = {
+        "title": f"[dry-dock] {task.title}",
+        "head": branch,
+        "base": project.default_branch,
+        "body": body,
+        "draft": False,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.github_token}",
+        "Accept": "application/vnd.github+json",
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(url, json=payload, headers=headers)
+        if r.status_code >= 300:
+            log.warning("github.pr_failed", status=r.status_code, body=r.text)
+            return None
+        return r.json().get("html_url")

@@ -61,6 +61,41 @@ async def _run(cmd: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
     return proc.returncode or 0, stdout.decode(errors="replace"), stderr.decode(errors="replace")
 
 
+# Valid prefixes for lines in a unified diff.
+_DIFF_LINE_PREFIXES = (
+    "diff ", "index ", "old mode", "new mode", "new file", "deleted file",
+    "rename ", "similarity ", "Binary ", "---", "+++", "@@", "+", "-", " ", "\\",
+)
+
+
+def _clean_patch(raw: str) -> str:
+    """Sanitize an LLM-generated unified diff before passing it to git apply.
+
+    Models frequently:
+    - emit CRLF line endings
+    - append explanatory prose after the last hunk but still inside the
+      ```diff fence — git apply stops with "corrupt patch" at that line
+
+    We normalize to LF and drop everything after the last valid diff line.
+    """
+    # Normalize line endings.
+    cleaned = raw.replace("\r\n", "\n").replace("\r", "\n")
+
+    lines = cleaned.splitlines(keepends=True)
+    last_valid = -1
+    for i, line in enumerate(lines):
+        if line.startswith(_DIFF_LINE_PREFIXES):
+            last_valid = i
+
+    if last_valid == -1:
+        return cleaned  # nothing recognizable — return as-is, will fail with a clear error
+
+    result = "".join(lines[: last_valid + 1])
+    if not result.endswith("\n"):
+        result += "\n"
+    return result
+
+
 async def ensure_clone(project: Project) -> Path:
     """Ensure the project repo is cloned locally and up to date with origin."""
     target = _repo_dir(project)
@@ -112,7 +147,7 @@ async def apply_patch_and_push(project: Project, task: Task, patch: str) -> str:
         stderr=asyncio.subprocess.PIPE,
         cwd=str(repo),
     )
-    stdout, stderr = await proc.communicate(patch.encode())
+    stdout, stderr = await proc.communicate(_clean_patch(patch).encode())
     if proc.returncode != 0:
         raise RuntimeError(f"git apply failed: {stderr.decode(errors='replace')}")
 

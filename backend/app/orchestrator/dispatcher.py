@@ -135,8 +135,8 @@ class Dispatcher:
                 for pool in KNOWN_POOLS:
                     while await _dispatch_one_for_pool(pool):
                         pass
-            except Exception:
-                log.exception("dispatcher.loop_error")
+            except Exception as exc:
+                log.exception("dispatcher.loop_error", error=str(exc), error_type=type(exc).__name__)
             try:
                 await asyncio.wait_for(self._tick.wait(), timeout=5.0)
             except asyncio.TimeoutError:

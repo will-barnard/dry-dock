@@ -56,6 +56,12 @@ async def _dispatch_one_for_pool(pool: str) -> bool:
             task.status = TaskStatus.CLAIMED
             task.attempt += 1
 
+            # Only pass a specific model to the worker when the task explicitly
+            # sets one. When preferred_model is None the worker falls back to
+            # its own DEFAULT_MODEL env var — right for heterogeneous pools
+            # where each machine runs different local models.
+            effective_model = task.preferred_model or None
+
             run = Run(
                 id=uuid.uuid4(),
                 task_id=task.id,
@@ -64,16 +70,8 @@ async def _dispatch_one_for_pool(pool: str) -> bool:
                 status=TaskStatus.CLAIMED,
                 started_at=datetime.now(timezone.utc),
                 worker_name=worker.name,
-                model_used=effective_model or None,
+                model_used=effective_model,
             )
-            session.add(run)
-            await session.flush()
-
-            # Only pass a specific model to the worker when the task explicitly
-            # sets one. When preferred_model is None the worker falls back to
-            # its own DEFAULT_MODEL env var — right for heterogeneous pools
-            # where each machine runs different local models.
-            effective_model = task.preferred_model or None
 
             grant = ClaimGrantMsg(
                 task_id=task.id,

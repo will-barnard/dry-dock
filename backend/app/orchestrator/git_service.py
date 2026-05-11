@@ -82,24 +82,39 @@ def _split_into_sections(lines: list[str]) -> list[list[str]]:
     return sections
 
 
-def _fix_section(section: list[str]) -> list[str]:
+def _fix_section(section: list[str], repo: "Path | None" = None) -> list[str]:
     """Sanitize one file section of a unified diff.
 
-    Handles four common LLM defects:
+    Handles five common LLM defects:
     1. CRLF endings (normalised before this is called).
     2. Bare empty lines inside hunks → space-prefixed context lines (or '+' for new files).
     3. New-file sections that use context/deletion lines instead of all-additions.
-    4. Missing ``new file mode`` header when the first hunk starts at @@ -0,0
-       (model generated a modification-style header for a brand-new file).
+    4. Missing ``new file mode`` header when the first hunk starts at @@ -0,0.
+    5. Modification-style diff for a file that doesn't actually exist in the
+       working tree — detected by checking the filesystem when ``repo`` is given.
     """
+    # Extract the target path from the "diff --git a/x b/x" line.
+    diff_line = next((l for l in section if l.startswith("diff --git ")), "")
+    parts = diff_line.rstrip("\n").split(" ")
+    b_path = parts[-1][2:] if len(parts) >= 4 and parts[-1].startswith("b/") else None
+
     # Detect whether this is (or should be) a new-file section.
     has_new_file_marker = any(l.startswith("new file") for l in section)
     first_hunk = next((l for l in section if l.startswith("@@")), None)
-    inferred_new = (
+    hunk_inferred_new = (
         not has_new_file_marker
         and first_hunk is not None
         and first_hunk.startswith("@@ -0,0 ")
     )
+    # If we have repo access, also check whether the file actually exists.
+    fs_inferred_new = (
+        not has_new_file_marker
+        and not hunk_inferred_new
+        and repo is not None
+        and b_path is not None
+        and not (repo / b_path).exists()
+    )
+    inferred_new = hunk_inferred_new or fs_inferred_new
     is_new_file = has_new_file_marker or inferred_new
 
     out: list[str] = []
@@ -136,13 +151,16 @@ def _fix_section(section: list[str]) -> list[str]:
     return out
 
 
-def _clean_patch(raw: str) -> str:
+def _clean_patch(raw: str, repo: "Path | None" = None) -> str:
     """Sanitize an LLM-generated unified diff before passing it to ``git apply``.
 
     LLMs routinely produce diffs with several classes of defect — see
     ``_fix_section`` for details.  This function normalises line endings,
     splits the diff into per-file sections, fixes each section, then strips
     any trailing non-diff prose appended inside the fence.
+
+    Pass ``repo`` (the local clone path) so the sanitizer can check the
+    filesystem and fix modification-style diffs for files that don't yet exist.
     """
     cleaned = raw.replace("\r\n", "\n").replace("\r", "\n")
     lines = cleaned.splitlines(keepends=True)
@@ -150,7 +168,7 @@ def _clean_patch(raw: str) -> str:
     sections = _split_into_sections(lines)
     fixed_lines: list[str] = []
     for sec in sections:
-        fixed_lines.extend(_fix_section(sec))
+        fixed_lines.extend(_fix_section(sec, repo=repo))
 
     # Truncate trailing non-diff prose (lines that don't start with a valid prefix).
     last_valid = -1
@@ -219,7 +237,7 @@ async def apply_patch_and_push(project: Project, task: Task, patch: str) -> str:
         stderr=asyncio.subprocess.PIPE,
         cwd=str(repo),
     )
-    stdout, stderr = await proc.communicate(_clean_patch(patch).encode())
+    stdout, stderr = await proc.communicate(_clean_patch(patch, repo=repo).encode())
     if proc.returncode != 0:
         raise RuntimeError(f"git apply failed: {stderr.decode(errors='replace')}")
 

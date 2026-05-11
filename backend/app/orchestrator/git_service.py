@@ -61,36 +61,62 @@ async def _run(cmd: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
     return proc.returncode or 0, stdout.decode(errors="replace"), stderr.decode(errors="replace")
 
 
-# Valid prefixes for lines in a unified diff.
+# Valid line-start prefixes in a unified diff.
 _DIFF_LINE_PREFIXES = (
     "diff ", "index ", "old mode", "new mode", "new file", "deleted file",
     "rename ", "similarity ", "Binary ", "---", "+++", "@@", "+", "-", " ", "\\",
 )
 
+# Headers that mark the start of a new file section (reset hunk state).
+_FILE_HEADERS = ("diff ", "index ", "--- ", "+++ ", "old mode", "new mode",
+                 "new file", "deleted file", "rename ", "similarity ", "Binary ")
+
 
 def _clean_patch(raw: str) -> str:
     """Sanitize an LLM-generated unified diff before passing it to git apply.
 
-    Models frequently:
-    - emit CRLF line endings
-    - append explanatory prose after the last hunk but still inside the
-      ```diff fence — git apply stops with "corrupt patch" at that line
+    LLMs commonly produce diffs with two problems:
 
-    We normalize to LF and drop everything after the last valid diff line.
+    1. **Empty context lines** — a context line that is empty in the source
+       file must appear as `` \\n`` (a single leading space) in the diff, but
+       models often emit a bare ``\\n``.  git treats those as corrupt.
+
+    2. **Trailing prose after the last hunk** — models sometimes append an
+       explanation inside the closing fence even though it isn't valid diff
+       syntax.  We truncate everything after the last recognisable diff line.
+
+    3. **CRLF line endings** — normalised to LF throughout.
     """
-    # Normalize line endings.
+    # Normalise line endings.
     cleaned = raw.replace("\r\n", "\n").replace("\r", "\n")
-
     lines = cleaned.splitlines(keepends=True)
+
+    # Pass 1 — fix bare empty lines inside hunks.
+    in_hunk = False
+    fixed: list[str] = []
+    for line in lines:
+        if line.startswith("@@"):
+            in_hunk = True
+            fixed.append(line)
+        elif line.startswith(_FILE_HEADERS):
+            in_hunk = False
+            fixed.append(line)
+        elif in_hunk and line == "\n":
+            # Bare empty line that should be a context line.
+            fixed.append(" \n")
+        else:
+            fixed.append(line)
+
+    # Pass 2 — truncate trailing non-diff prose.
     last_valid = -1
-    for i, line in enumerate(lines):
+    for i, line in enumerate(fixed):
         if line.startswith(_DIFF_LINE_PREFIXES):
             last_valid = i
 
     if last_valid == -1:
-        return cleaned  # nothing recognizable — return as-is, will fail with a clear error
+        return "".join(fixed)  # nothing recognisable — return as-is
 
-    result = "".join(lines[: last_valid + 1])
+    result = "".join(fixed[: last_valid + 1])
     if not result.endswith("\n"):
         result += "\n"
     return result
@@ -141,6 +167,7 @@ async def apply_patch_and_push(project: Project, task: Task, patch: str) -> str:
         "git",
         "apply",
         "--whitespace=nowarn",
+        "--recount",  # don't trust the LLM's hunk line counts, recompute them
         "--index",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,

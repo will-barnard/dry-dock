@@ -137,6 +137,23 @@ async def project_detail(
     )
 
 
+@router.post("/projects/{project_id}/settings", response_class=HTMLResponse)
+async def update_project_settings(
+    request: Request,
+    project_id: uuid.UUID,
+    auto_approve_plans: bool = Form(False),
+    auto_approve_merges: bool = Form(False),
+    session: AsyncSession = Depends(get_session),
+):
+    project = await session.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+    project.auto_approve_plans = auto_approve_plans
+    project.auto_approve_merges = auto_approve_merges
+    await session.commit()
+    return RedirectResponse(f"/projects/{project_id}", status_code=303)
+
+
 @router.post("/projects/{project_id}/tasks", response_class=HTMLResponse)
 async def create_task_form(
     request: Request,

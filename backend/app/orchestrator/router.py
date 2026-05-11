@@ -12,6 +12,18 @@ from app.orchestrator.registry import LiveWorker, registry
 from app.orchestrator.settings_service import get_role_model
 
 
+def _model_available(installed: list[str], required: str) -> bool:
+    """Return True if `required` is satisfied by any installed model.
+
+    Ollama returns full quantization tags (e.g. qwen2.5-coder:32b-instruct-q4_K_M)
+    while the required model is typically the short form (qwen2.5-coder:32b).
+    Accept a match if any installed model name starts with required (case-insensitive),
+    which covers both exact matches and quantization-suffixed variants.
+    """
+    req = required.lower()
+    return any(m.lower() == req or m.lower().startswith(req + "-") for m in installed)
+
+
 def _worker_can_run(worker: LiveWorker, task: Task, required_model: str | None) -> bool:
     if worker.current_task_id is not None:
         return False
@@ -21,7 +33,7 @@ def _worker_can_run(worker: LiveWorker, task: Task, required_model: str | None) 
         return False
     if task.min_vram_gb and (worker.gpu_vram_gb or 0) < task.min_vram_gb:
         return False
-    if required_model and required_model not in worker.installed_models:
+    if required_model and not _model_available(worker.installed_models, required_model):
         return False
     return True
 

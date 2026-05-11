@@ -91,19 +91,39 @@ def _clean_patch(raw: str) -> str:
     cleaned = raw.replace("\r\n", "\n").replace("\r", "\n")
     lines = cleaned.splitlines(keepends=True)
 
-    # Pass 1 — fix bare empty lines inside hunks.
+    # Pass 1 — fix bare empty lines inside hunks, and fix new-file hunks that
+    # contain context/deletion lines (which git rejects as "depends on old contents").
     in_hunk = False
+    is_new_file = False
     fixed: list[str] = []
     for line in lines:
-        if line.startswith("@@"):
-            in_hunk = True
+        if line.startswith("diff "):
+            in_hunk = False
+            is_new_file = False
+            fixed.append(line)
+        elif line.startswith("new file"):
+            is_new_file = True
             fixed.append(line)
         elif line.startswith(_FILE_HEADERS):
-            in_hunk = False
             fixed.append(line)
-        elif in_hunk and line == "\n":
-            # Bare empty line that should be a context line.
-            fixed.append(" \n")
+        elif line.startswith("@@"):
+            in_hunk = True
+            fixed.append(line)
+        elif in_hunk:
+            if line == "\n":
+                # Bare empty line should be a context line.
+                if is_new_file:
+                    fixed.append("+\n")
+                else:
+                    fixed.append(" \n")
+            elif is_new_file and line.startswith(" "):
+                # Context line in a new-file hunk → addition.
+                fixed.append("+" + line[1:])
+            elif is_new_file and line.startswith("-"):
+                # Deletion in a new-file hunk → doesn't exist yet, drop it.
+                pass
+            else:
+                fixed.append(line)
         else:
             fixed.append(line)
 

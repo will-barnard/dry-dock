@@ -152,6 +152,213 @@ def extract_diff(text: str) -> str | None:
     return None
 
 
+# ── SEARCH/REPLACE block format ─────────────────────────────────────
+#
+# Why this format over unified diffs:
+#
+#   - No line numbers or hunk headers for the model to get wrong.
+#   - No context-line bookkeeping — exact substring match is all we need.
+#   - New files (empty SEARCH) and deletions (empty REPLACE) fall out naturally.
+#   - We apply locally and let `git diff` produce the canonical patch the
+#     orchestrator pushes, so what crosses the wire is always a valid diff
+#     by construction.
+#
+# Block shape:
+#
+#   path/to/file.py
+#   <<<<<<< SEARCH
+#   ...exact bytes currently in the file...
+#   =======
+#   ...bytes to replace them with...
+#   >>>>>>> REPLACE
+#
+# A whole block must live inside a single ``` fence (any language tag) OR
+# appear at top level — the parser handles both so models can be loose.
+
+# Match the head/middle/tail markers; the filename is whatever appeared on the
+# preceding line. We capture greedy bodies non-greedily and stop on the
+# closing marker. DOTALL so '.' matches newlines inside the bodies.
+_SR_RE = re.compile(
+    r"<{5,}\s*SEARCH\s*\n"
+    r"(?P<search>.*?)\n?"
+    r"={5,}\s*\n"
+    r"(?P<replace>.*?)\n?"
+    r">{5,}\s*REPLACE\s*$",
+    re.DOTALL | re.MULTILINE,
+)
+
+
+def extract_search_replace_blocks(text: str) -> list[tuple[str, str, str]]:
+    """Pull every (filename, search, replace) tuple from a model response.
+
+    Filename is the last non-empty non-fence line preceding each `<<<<<<<`
+    marker. Works whether blocks are inside fenced code blocks or at the
+    top level — we strip fences first and parse the whole text.
+    """
+    # Strip ``` fences (any language) by removing the lines themselves while
+    # keeping their contents. Same effect as concatenating every fenced block
+    # with the unfenced prose around it.
+    flat_lines: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        flat_lines.append(line)
+    flat = "\n".join(flat_lines)
+
+    blocks: list[tuple[str, str, str]] = []
+    for m in _SR_RE.finditer(flat):
+        # Walk backward from the match start to find the filename line.
+        head = flat[: m.start()]
+        filename = ""
+        for prev in reversed(head.splitlines()):
+            stripped = prev.strip().lstrip("#").strip()
+            if not stripped:
+                continue
+            # Skip filenames that are obviously sentences; favor things that
+            # look like paths or have a file extension.
+            if "/" in stripped or "." in stripped or "_" in stripped:
+                # Pull off any trailing punctuation that prose-around might leave.
+                filename = stripped.rstrip(":` ").lstrip("`")
+                break
+            # If first non-empty line back doesn't look path-y, stop hunting
+            # rather than walking back arbitrarily — protects us from grabbing
+            # an unrelated sentence.
+            break
+        if filename:
+            blocks.append((filename, m.group("search"), m.group("replace")))
+    return blocks
+
+
+class ApplyError(RuntimeError):
+    """Raised when a SEARCH/REPLACE block can't be applied to the worktree."""
+
+
+def apply_search_replace_blocks(
+    ws: GitWorkspace, blocks: list[tuple[str, str, str]]
+) -> list[str]:
+    """Apply each block in order to the worktree. Returns the modified files.
+
+    Rules:
+      - Empty SEARCH ⇒ create the file (parent dirs included). If the file
+        already exists, append? No — error. SR is for edits or net-new files,
+        and silent-overwrite would mask bugs.
+      - Empty REPLACE with non-empty SEARCH that matches the entire file
+        contents ⇒ delete the file.
+      - Empty REPLACE in general ⇒ replace the matched span with nothing.
+      - Otherwise: SEARCH must appear exactly once in the file. Multiple or
+        zero matches raise ApplyError so the runner can report it cleanly.
+    """
+    assert ws.path is not None
+    modified: list[str] = []
+    for filename, search, replace in blocks:
+        rel = filename.lstrip("./")
+        path = ws.path / rel
+        if not search.strip():
+            if path.exists():
+                raise ApplyError(
+                    f"empty SEARCH for {rel!r}, but the file already exists"
+                )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(replace, encoding="utf-8")
+            modified.append(rel)
+            continue
+
+        if not path.exists():
+            raise ApplyError(f"file does not exist: {rel}")
+
+        current = path.read_text(encoding="utf-8")
+        count = current.count(search)
+        if count == 0:
+            # Try a whitespace-tolerant match before giving up.
+            stripped_current = "\n".join(line.rstrip() for line in current.splitlines())
+            stripped_search = "\n".join(line.rstrip() for line in search.splitlines())
+            if stripped_current.count(stripped_search) == 1:
+                current = stripped_current
+                search = stripped_search
+                count = 1
+            else:
+                raise ApplyError(
+                    f"SEARCH not found in {rel!r} (model's idea of the file "
+                    f"diverges from reality)"
+                )
+        if count > 1:
+            raise ApplyError(
+                f"SEARCH matches {count} times in {rel!r}; widen the SEARCH "
+                f"block to include more context so the match is unique"
+            )
+
+        # Whole-file delete: SEARCH was the entire file, REPLACE is empty.
+        if not replace.strip() and current.strip() == search.strip():
+            path.unlink()
+            modified.append(rel)
+            continue
+
+        path.write_text(current.replace(search, replace, 1), encoding="utf-8")
+        modified.append(rel)
+    return modified
+
+
+# ── Relevant-file selection for the user prompt ──────────────────────
+
+
+def relevant_files_for_prompt(
+    prompt: str, all_files: list[str], *, max_files: int = 8
+) -> list[str]:
+    """Pick files most likely to be touched by a task, by lightweight matching.
+
+    Strategy:
+      1. Filenames mentioned literally in the task prompt (full path or
+         basename) win — those are almost always the right ones.
+      2. Failing that, return a small set of top-level project files
+         (likely entry points), excluding tests and hidden paths.
+
+    Capped at `max_files`. The caller is expected to also cap the per-file
+    byte size when stitching contents into the prompt.
+    """
+    import os as _os
+
+    mentioned: list[str] = []
+    for f in all_files:
+        base = _os.path.basename(f)
+        # Avoid trivial matches like 'a' or '.py'
+        if len(base) < 3:
+            continue
+        if f in prompt or base in prompt:
+            mentioned.append(f)
+    if mentioned:
+        return mentioned[:max_files]
+
+    interesting = [
+        f for f in all_files
+        if f.count("/") <= 1
+        and not f.startswith(".")
+        and not any(p in f.lower() for p in ("test_", "_test.", "/tests/", "/test/"))
+    ]
+    return interesting[:max_files]
+
+
+def render_file_contents(
+    ws: GitWorkspace, files: list[str], *, max_bytes_per_file: int = 8000
+) -> str:
+    """Format selected file contents as a section the model can refer to.
+
+    Each file is wrapped in markers so the model knows precisely what it's
+    looking at and how to refer back to it in SEARCH/REPLACE blocks.
+    """
+    parts: list[str] = []
+    for f in files:
+        try:
+            content = ws.read(f)
+        except Exception:
+            continue
+        if len(content) > max_bytes_per_file:
+            content = content[:max_bytes_per_file] + f"\n…[truncated; file is {len(content)} bytes]\n"
+        parts.append(f"--- FILE: {f} ---\n{content}\n--- END FILE: {f} ---\n")
+    return "\n".join(parts)
+
+
 async def with_workspace(project: dict[str, Any]):
     """Context manager wrapping GitWorkspace."""
     return GitWorkspace(
@@ -159,3 +366,32 @@ async def with_workspace(project: dict[str, Any]):
         github_repo=project["github_repo"],
         default_branch=project.get("default_branch", "main"),
     )
+
+
+# Reusable SR-format instruction snippet for runners that edit files.
+SEARCH_REPLACE_INSTRUCTIONS = """\
+When you need to change files, output one or more SEARCH/REPLACE blocks in
+this exact format (a brief plain-prose plan before them is fine; nothing else
+matters):
+
+    path/to/file.py
+    <<<<<<< SEARCH
+    exact lines currently in the file
+    =======
+    new lines to replace them with
+    >>>>>>> REPLACE
+
+Rules:
+  - The SEARCH text must match the file's current contents EXACTLY, byte for
+    byte, including indentation. Copy from the file shown above; don't
+    paraphrase.
+  - To create a new file, leave SEARCH empty (just the `<<<<<<< SEARCH`
+    marker immediately followed by the `=======` marker).
+  - To delete a file, put the entire current file contents in SEARCH and
+    leave REPLACE empty.
+  - Use one SEARCH/REPLACE block per logical edit. Multiple blocks targeting
+    the same file are fine; they apply in order.
+  - Do NOT output a unified diff or anything resembling one. SEARCH/REPLACE
+    is the only accepted change format.
+"""
+

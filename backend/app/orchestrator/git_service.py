@@ -251,24 +251,39 @@ async def ensure_clone(project: Project) -> Path:
     return target
 
 
-async def apply_patch_and_push(project: Project, task: Task, patch: str) -> str:
-    """Apply a unified diff on a new agent branch, then push.
+async def apply_patch_and_push(
+    project: Project, task: Task, patch: str
+) -> tuple[str, bool]:
+    """Apply a unified diff on an agent branch and push.
 
-    The new branch is always ``agent/<task.id>`` so it is globally unique.
-    If ``task.branch_name`` is already set it was inherited from the parent task
-    and is used as the *base* to branch from (so this task's changes layer on
-    top of the previous agent's work).  Otherwise the project's default branch
-    is the base.
+    Two cases:
 
-    Returns the name of the newly created branch.
+    - If ``task.branch_name`` is already set, it was inherited from this task's
+      parent in a plan chain. We push *onto that same branch*: tester + docs +
+      reviewer + … all keep adding commits to the coder's branch, so one plan
+      produces one PR that grows as each step completes. Returns
+      ``(branch, False)`` so the caller skips opening a duplicate PR.
+
+    - Otherwise this is a fresh chain or a standalone task. We create
+      ``agent/<task.id>`` off the project's default branch, push, and return
+      ``(branch, True)`` so the caller opens the PR.
     """
     repo = await ensure_clone(project)
-    new_branch = f"agent/{task.id}"
-    base = task.branch_name or project.default_branch
 
-    # Fetch and reset to base, then create the new agent branch from it.
+    if task.branch_name:
+        target_branch = task.branch_name
+        base = target_branch
+        is_new_branch = False
+    else:
+        target_branch = f"agent/{task.id}"
+        base = project.default_branch
+        is_new_branch = True
+
+    # Fetch and check out the working branch. For a fresh task, create it off
+    # the default branch; for a chained task, fast-forward to the latest tip
+    # of the shared branch so the patch applies on top of any prior siblings.
     await _run(["git", "fetch", "origin", base], cwd=repo)
-    await _run(["git", "checkout", "-B", new_branch, f"origin/{base}"], cwd=repo)
+    await _run(["git", "checkout", "-B", target_branch, f"origin/{base}"], cwd=repo)
 
     # Pre-clean: if the patch wants to create a file that's already tracked,
     # remove it from the index first so git apply sees a genuine new-file slot.
@@ -311,11 +326,18 @@ async def apply_patch_and_push(project: Project, task: Task, patch: str) -> str:
          "commit", "-m", f"agent: {task.title}\n\nTask {task.id}"],
         cwd=repo,
     )
-    code, out, err = await _run(["git", "push", "-u", "origin", new_branch, "--force-with-lease"], cwd=repo)
+    # --force-with-lease is safe even for the chained-branch case because we
+    # just fetched and checked out origin's tip; if a sibling task pushed
+    # between the fetch and our push, the lease will reject and we'll fail
+    # the task cleanly rather than silently overwrite.
+    code, out, err = await _run(
+        ["git", "push", "-u", "origin", target_branch, "--force-with-lease"],
+        cwd=repo,
+    )
     if code != 0:
         raise RuntimeError(f"git push failed: {err}")
 
-    return new_branch
+    return target_branch, is_new_branch
 
 
 async def open_pull_request(project: Project, task: Task, branch: str, body: str) -> str | None:

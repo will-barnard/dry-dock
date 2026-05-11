@@ -69,7 +69,12 @@ _DIFF_LINE_PREFIXES = (
 
 
 def _split_into_sections(lines: list[str]) -> list[list[str]]:
-    """Split a diff into per-file sections (each starts with 'diff --git')."""
+    """Split a diff into per-file sections (each starts with 'diff --git').
+
+    If the model omits the ``diff --git`` header entirely but includes
+    ``--- a/path`` / ``+++ b/path`` lines, synthesise a minimal header so
+    the rest of the sanitizer can work on a well-formed section.
+    """
     sections: list[list[str]] = []
     current: list[str] = []
     for line in lines:
@@ -79,7 +84,25 @@ def _split_into_sections(lines: list[str]) -> list[list[str]]:
         current.append(line)
     if current:
         sections.append(current)
-    return sections
+
+    # For sections that have no 'diff --git' line, try to reconstruct one
+    # from '+++ b/path' (or '--- a/path' as fallback).
+    repaired: list[list[str]] = []
+    for sec in sections:
+        has_diff = any(l.startswith("diff ") for l in sec)
+        if not has_diff:
+            plus_line = next((l for l in sec if l.startswith("+++ b/")), None)
+            minus_line = next((l for l in sec if l.startswith("--- a/")), None)
+            path = None
+            if plus_line:
+                path = plus_line[6:].rstrip("\n")
+            elif minus_line:
+                path = minus_line[6:].rstrip("\n")
+            if path:
+                synthetic = f"diff --git a/{path} b/{path}\n"
+                sec = [synthetic] + sec
+        repaired.append(sec)
+    return repaired
 
 
 def _fix_section(section: list[str], repo: "Path | None" = None) -> list[str]:
@@ -98,11 +121,13 @@ def _fix_section(section: list[str], repo: "Path | None" = None) -> list[str]:
     parts = diff_line.rstrip("\n").split(" ")
     b_path = parts[-1][2:] if len(parts) >= 4 and parts[-1].startswith("b/") else None
 
-    # Detect whether this is (or should be) a new-file section.
+    # Detect whether this is (or should be) a new-file / deleted-file section.
     has_new_file_marker = any(l.startswith("new file") for l in section)
+    is_deleted_file = any(l.startswith("deleted file") for l in section)
     first_hunk = next((l for l in section if l.startswith("@@")), None)
     hunk_inferred_new = (
         not has_new_file_marker
+        and not is_deleted_file
         and first_hunk is not None
         and first_hunk.startswith("@@ -0,0 ")
     )
@@ -110,6 +135,7 @@ def _fix_section(section: list[str], repo: "Path | None" = None) -> list[str]:
     fs_inferred_new = (
         not has_new_file_marker
         and not hunk_inferred_new
+        and not is_deleted_file
         and repo is not None
         and b_path is not None
         and not (repo / b_path).exists()
@@ -141,14 +167,29 @@ def _fix_section(section: list[str], repo: "Path | None" = None) -> list[str]:
             else:
                 out.append(line)
         elif in_hunk:
-            if line == "\n":
-                out.append("+\n" if is_new_file else " \n")
-            elif is_new_file and line.startswith(" "):
-                out.append("+" + line[1:])
-            elif is_new_file and line.startswith("-"):
-                pass  # deletion in a new file makes no sense — drop it
+            if is_new_file:
+                if line == "\n":
+                    out.append("+\n")
+                elif line.startswith(" "):
+                    out.append("+" + line[1:])
+                elif line.startswith("-"):
+                    pass  # deletion in a new file makes no sense — drop it
+                else:
+                    out.append(line)
+            elif is_deleted_file:
+                if line == "\n":
+                    out.append("-\n")  # bare empty line in a deletion hunk must be removed
+                elif line.startswith(" "):
+                    out.append("-" + line[1:])  # context line → deletion
+                elif line.startswith("+"):
+                    pass  # addition in a deleted-file section makes no sense — drop it
+                else:
+                    out.append(line)
             else:
-                out.append(line)
+                if line == "\n":
+                    out.append(" \n")
+                else:
+                    out.append(line)
         else:
             out.append(line)
 
@@ -181,7 +222,7 @@ def _clean_patch(raw: str, repo: "Path | None" = None) -> str:
             last_valid = i
 
     if last_valid == -1:
-        return "".join(fixed_lines)
+        return ""  # no diff content found — caller handles gracefully
 
     result = "".join(fixed_lines[: last_valid + 1])
     if not result.endswith("\n"):
@@ -229,6 +270,26 @@ async def apply_patch_and_push(project: Project, task: Task, patch: str) -> str:
     await _run(["git", "fetch", "origin", base], cwd=repo)
     await _run(["git", "checkout", "-B", new_branch, f"origin/{base}"], cwd=repo)
 
+    # Pre-clean: if the patch wants to create a file that's already tracked,
+    # remove it from the index first so git apply sees a genuine new-file slot.
+    cleaned = _clean_patch(patch, repo=repo)
+    cleaned_lines = cleaned.splitlines(keepends=True)
+    for sec in _split_into_sections(cleaned_lines):
+        if not any(l.startswith("new file") for l in sec):
+            continue
+        diff_l = next((l for l in sec if l.startswith("diff --git ")), "")
+        parts = diff_l.rstrip("\n").split(" ")
+        b_path = parts[-1][2:] if len(parts) >= 4 and parts[-1].startswith("b/") else None
+        if b_path and (repo / b_path).exists():
+            log.info("git.rm_before_new_file", path=b_path)
+            await _run(["git", "rm", "-f", "--", b_path], cwd=repo)
+
+    if not cleaned.strip():
+        raise RuntimeError(
+            "patch apply failed: no diff content found — "
+            "the model may have returned prose instead of a unified diff"
+        )
+
     # Apply patch from stdin.
     proc = await asyncio.create_subprocess_exec(
         "git",
@@ -241,7 +302,7 @@ async def apply_patch_and_push(project: Project, task: Task, patch: str) -> str:
         stderr=asyncio.subprocess.PIPE,
         cwd=str(repo),
     )
-    stdout, stderr = await proc.communicate(_clean_patch(patch, repo=repo).encode())
+    stdout, stderr = await proc.communicate(cleaned.encode())
     if proc.returncode != 0:
         raise RuntimeError(f"git apply failed: {stderr.decode(errors='replace')}")
 

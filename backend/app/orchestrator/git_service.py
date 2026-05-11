@@ -67,76 +67,101 @@ _DIFF_LINE_PREFIXES = (
     "rename ", "similarity ", "Binary ", "---", "+++", "@@", "+", "-", " ", "\\",
 )
 
-# Headers that mark the start of a new file section (reset hunk state).
-_FILE_HEADERS = ("diff ", "index ", "--- ", "+++ ", "old mode", "new mode",
-                 "new file", "deleted file", "rename ", "similarity ", "Binary ")
+
+def _split_into_sections(lines: list[str]) -> list[list[str]]:
+    """Split a diff into per-file sections (each starts with 'diff --git')."""
+    sections: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        if line.startswith("diff ") and current:
+            sections.append(current)
+            current = []
+        current.append(line)
+    if current:
+        sections.append(current)
+    return sections
+
+
+def _fix_section(section: list[str]) -> list[str]:
+    """Sanitize one file section of a unified diff.
+
+    Handles four common LLM defects:
+    1. CRLF endings (normalised before this is called).
+    2. Bare empty lines inside hunks → space-prefixed context lines (or '+' for new files).
+    3. New-file sections that use context/deletion lines instead of all-additions.
+    4. Missing ``new file mode`` header when the first hunk starts at @@ -0,0
+       (model generated a modification-style header for a brand-new file).
+    """
+    # Detect whether this is (or should be) a new-file section.
+    has_new_file_marker = any(l.startswith("new file") for l in section)
+    first_hunk = next((l for l in section if l.startswith("@@")), None)
+    inferred_new = (
+        not has_new_file_marker
+        and first_hunk is not None
+        and first_hunk.startswith("@@ -0,0 ")
+    )
+    is_new_file = has_new_file_marker or inferred_new
+
+    out: list[str] = []
+    in_hunk = False
+
+    for line in section:
+        if line.startswith("diff "):
+            in_hunk = False
+            out.append(line)
+            if inferred_new:
+                out.append("new file mode 100644\n")
+        elif line.startswith("new file"):
+            out.append(line)
+        elif line.startswith("@@"):
+            in_hunk = True
+            out.append(line)
+        elif line.startswith("--- "):
+            if inferred_new:
+                out.append("--- /dev/null\n")
+            else:
+                out.append(line)
+        elif in_hunk:
+            if line == "\n":
+                out.append("+\n" if is_new_file else " \n")
+            elif is_new_file and line.startswith(" "):
+                out.append("+" + line[1:])
+            elif is_new_file and line.startswith("-"):
+                pass  # deletion in a new file makes no sense — drop it
+            else:
+                out.append(line)
+        else:
+            out.append(line)
+
+    return out
 
 
 def _clean_patch(raw: str) -> str:
-    """Sanitize an LLM-generated unified diff before passing it to git apply.
+    """Sanitize an LLM-generated unified diff before passing it to ``git apply``.
 
-    LLMs commonly produce diffs with two problems:
-
-    1. **Empty context lines** — a context line that is empty in the source
-       file must appear as `` \\n`` (a single leading space) in the diff, but
-       models often emit a bare ``\\n``.  git treats those as corrupt.
-
-    2. **Trailing prose after the last hunk** — models sometimes append an
-       explanation inside the closing fence even though it isn't valid diff
-       syntax.  We truncate everything after the last recognisable diff line.
-
-    3. **CRLF line endings** — normalised to LF throughout.
+    LLMs routinely produce diffs with several classes of defect — see
+    ``_fix_section`` for details.  This function normalises line endings,
+    splits the diff into per-file sections, fixes each section, then strips
+    any trailing non-diff prose appended inside the fence.
     """
-    # Normalise line endings.
     cleaned = raw.replace("\r\n", "\n").replace("\r", "\n")
     lines = cleaned.splitlines(keepends=True)
 
-    # Pass 1 — fix bare empty lines inside hunks, and fix new-file hunks that
-    # contain context/deletion lines (which git rejects as "depends on old contents").
-    in_hunk = False
-    is_new_file = False
-    fixed: list[str] = []
-    for line in lines:
-        if line.startswith("diff "):
-            in_hunk = False
-            is_new_file = False
-            fixed.append(line)
-        elif line.startswith("new file"):
-            is_new_file = True
-            fixed.append(line)
-        elif line.startswith(_FILE_HEADERS):
-            fixed.append(line)
-        elif line.startswith("@@"):
-            in_hunk = True
-            fixed.append(line)
-        elif in_hunk:
-            if line == "\n":
-                # Bare empty line should be a context line.
-                if is_new_file:
-                    fixed.append("+\n")
-                else:
-                    fixed.append(" \n")
-            elif is_new_file and line.startswith(" "):
-                # Context line in a new-file hunk → addition.
-                fixed.append("+" + line[1:])
-            elif is_new_file and line.startswith("-"):
-                # Deletion in a new-file hunk → doesn't exist yet, drop it.
-                pass
-            else:
-                fixed.append(line)
-        else:
-            fixed.append(line)
+    sections = _split_into_sections(lines)
+    fixed_lines: list[str] = []
+    for sec in sections:
+        fixed_lines.extend(_fix_section(sec))
 
-    # Pass 2 — truncate trailing non-diff prose.
+    # Truncate trailing non-diff prose (lines that don't start with a valid prefix).
     last_valid = -1
-    for i, line in enumerate(fixed):
+    for i, line in enumerate(fixed_lines):
         if line.startswith(_DIFF_LINE_PREFIXES):
             last_valid = i
 
     if last_valid == -1:
-        return "".join(fixed)  # nothing recognisable — return as-is
+        return "".join(fixed_lines)
 
-    result = "".join(fixed[: last_valid + 1])
+    result = "".join(fixed_lines[: last_valid + 1])
     if not result.endswith("\n"):
         result += "\n"
     return result

@@ -284,7 +284,7 @@ async def apply_patch_and_push(project: Project, task: Task, patch: str) -> str:
             log.info("git.rm_before_new_file", path=b_path)
             await _run(["git", "rm", "-f", "--", b_path], cwd=repo)
 
-    if not cleaned.strip():
+    if not cleaned.strip() or "\n@@" not in cleaned and not cleaned.startswith("@@"):
         raise RuntimeError(
             "patch apply failed: no diff content found — "
             "the model may have returned prose instead of a unified diff"

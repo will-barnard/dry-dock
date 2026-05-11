@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     # Filesystem
     repo_cache_dir: str = Field(default="/var/lib/drydock/repos", alias="REPO_CACHE_DIR")
 
+    # Session cookie signing. Set this in Beachhead env to anything long and
+    # random — if it ever changes, every existing browser session is invalidated.
+    session_secret: str = Field(
+        default="CHANGE-ME-dev-only-not-for-production", alias="SESSION_SECRET"
+    )
+    # Mark the session cookie Secure so browsers only send it over HTTPS.
+    # True for Beachhead production deploys; flip to False if you ever serve
+    # the orchestrator over plain HTTP for local dev.
+    session_https_only: bool = Field(default=True, alias="SESSION_HTTPS_ONLY")
+
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
 

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Set up dry-dock</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 min-h-screen flex items-center justify-center">
+  <div class="w-full max-w-md bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+    <h1 class="text-2xl font-semibold tracking-tight font-mono">dry-dock</h1>
+    <p class="mt-1 text-sm text-slate-600">
+      First-run setup. Create the admin account for this deploy.
+    </p>
+
+    {% if error %}
+      <div class="mt-4 bg-rose-50 border border-rose-200 text-rose-800 text-sm rounded px-3 py-2">
+        {{ error }}
+      </div>
+    {% endif %}
+
+    <form method="post" action="/setup" class="mt-5 space-y-3">
+      <label class="block text-sm">Email
+        <input name="email" type="email" required autofocus value="{{ email or '' }}"
+               class="w-full mt-1 border border-slate-300 rounded px-2 py-1.5 font-mono text-sm">
+      </label>
+      <label class="block text-sm">Display name <span class="text-slate-400">(optional)</span>
+        <input name="name" type="text" value="{{ name or '' }}"
+               class="w-full mt-1 border border-slate-300 rounded px-2 py-1.5 text-sm">
+      </label>
+      <label class="block text-sm">Password <span class="text-slate-400">(min 10 characters)</span>
+        <input name="password" type="password" required minlength="10"
+               class="w-full mt-1 border border-slate-300 rounded px-2 py-1.5 font-mono text-sm">
+      </label>
+      <label class="block text-sm">Confirm password
+        <input name="confirm" type="password" required minlength="10"
+               class="w-full mt-1 border border-slate-300 rounded px-2 py-1.5 font-mono text-sm">
+      </label>
+      <button class="w-full bg-slate-900 text-white text-sm font-medium px-4 py-2 rounded">
+        Create account
+      </button>
+    </form>
+
+    <p class="mt-4 text-xs text-slate-500">
+      This page is reachable only until the first account is created. Set
+      <code class="font-mono">SESSION_SECRET</code> in your Beachhead env to a strong
+      random value so session cookies survive restarts.
+    </p>
+  </div>
+</body>
+</html>

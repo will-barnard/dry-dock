@@ -12,3 +12,5 @@ python-multipart==0.0.18
 websockets==13.1
 pgvector==0.3.6
 structlog==24.4.0
+bcrypt==4.2.1
+itsdangerous==2.2.0

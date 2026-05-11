@@ -30,12 +30,14 @@ class CoderRunner(BaseRunner):
 
     async def setup(self) -> None:
         # Clone the repo and stash a file-tree summary into the user prompt
-        # context so the model knows what it's working with. For MVP we keep
-        # this very small; in the next iteration we'll switch to embeddings.
+        # context so the model knows what it's working with. Use the inherited
+        # branch if this task is chained from a previous coder; otherwise clone
+        # from the project's default branch.
+        branch = self.ctx.branch_name or self.ctx.project.get("default_branch", "main")
         ws = GitWorkspace(
             self.ctx.project["github_owner"],
             self.ctx.project["github_repo"],
-            self.ctx.project.get("default_branch", "main"),
+            branch,
         )
         self._ws = ws
         await ws.__aenter__()

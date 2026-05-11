@@ -128,10 +128,20 @@ async def requeue_failed_children(session: AsyncSession, parent: Task) -> int:
     return len(rows)
 
 
-async def promote_ready_children(session: AsyncSession, task: Task) -> int:
-    """Advance PENDING tasks that were waiting on `task` to QUEUED now that it
-    has succeeded. Call this whenever a task transitions to SUCCEEDED so its
-    direct dependents can be dispatched."""
+async def promote_ready_children(
+    session: AsyncSession,
+    task: Task,
+    *,
+    parent_branch: str | None = None,
+) -> int:
+    """Advance PENDING tasks that were waiting on `task` to QUEUED.
+
+    Call this whenever a task either SUCCEEDS or enters AWAITING_APPROVAL for a
+    merge gate (the code is written; children can proceed on its branch).
+
+    If `parent_branch` is supplied, it is written into each promoted child's
+    `branch_name` so the next worker checks out the right base branch.
+    """
     result = await session.execute(
         select(Task).where(
             Task.parent_task_id == task.id,
@@ -141,8 +151,11 @@ async def promote_ready_children(session: AsyncSession, task: Task) -> int:
     children = list(result.scalars().all())
     for child in children:
         child.status = TaskStatus.QUEUED
+        if parent_branch:
+            child.branch_name = parent_branch
     if children:
-        log.info("lifecycle.promoted_children", parent=str(task.id), count=len(children))
+        log.info("lifecycle.promoted_children", parent=str(task.id), count=len(children),
+                 parent_branch=parent_branch)
     return len(children)
 
 

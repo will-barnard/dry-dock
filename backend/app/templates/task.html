@@ -100,11 +100,30 @@
 
     <div class="bg-white border border-slate-200 rounded p-4">
       <h2 class="text-lg font-semibold mb-2">Live log</h2>
-      <pre class="log text-xs font-mono bg-slate-900 text-slate-100 p-3 rounded h-80 overflow-auto" id="logbox"
-           hx-ext="sse" sse-connect="/stream/tasks/{{ task.id }}" sse-swap="log">
-{% for e in events %}{{ e.body }}
-{% endfor %}</pre>
+      <pre class="log text-xs font-mono bg-slate-900 text-slate-100 p-3 rounded h-80 overflow-auto" id="logbox">{% for e in events %}{{ e.body }}{% endfor %}</pre>
     </div>
+    <script>
+    (function(){
+      var box = document.getElementById('logbox');
+      if (!box) return;
+      var src = new EventSource('/stream/tasks/{{ task.id }}');
+      src.addEventListener('message', function(e){
+        var ev;
+        try { ev = JSON.parse(e.data); } catch(_) { return; }
+        if (ev.type === 'log') {
+          box.textContent += ev.body;
+          box.scrollTop = box.scrollHeight;
+        } else if (ev.type === 'status') {
+          var badge = document.getElementById('task-status');
+          if (badge) badge.textContent = ev.status;
+          if (ev.status === 'succeeded' || ev.status === 'failed' || ev.status === 'rejected') {
+            src.close();
+          }
+        }
+      });
+      src.onerror = function(){ src.close(); };
+    })();
+    </script>
 
     {% for art in artifacts %}
       <div class="bg-white border border-slate-200 rounded p-4">

@@ -83,20 +83,26 @@ async def ensure_clone(project: Project) -> Path:
 
 
 async def branch_name_for_task(task: Task) -> str:
-    return task.branch_name or f"agent/{task.id}"
 
 
 async def apply_patch_and_push(project: Project, task: Task, patch: str) -> str:
-    """Apply a unified diff on top of the project's default branch on a task
-    branch, then push. Returns the branch name."""
-    repo = await ensure_clone(project)
-    branch = await branch_name_for_task(task)
+    """Apply a unified diff on a new agent branch, then push.
 
-    # Reset to a clean state on default branch, then create the agent branch.
-    await _run(["git", "fetch", "origin", project.default_branch], cwd=repo)
-    await _run(["git", "checkout", "-f", project.default_branch], cwd=repo)
-    await _run(["git", "reset", "--hard", f"origin/{project.default_branch}"], cwd=repo)
-    await _run(["git", "checkout", "-B", branch], cwd=repo)
+    The new branch is always ``agent/<task.id>`` so it is globally unique.
+    If ``task.branch_name`` is already set it was inherited from the parent task
+    and is used as the *base* to branch from (so this task's changes layer on
+    top of the previous agent's work).  Otherwise the project's default branch
+    is the base.
+
+    Returns the name of the newly created branch.
+    """
+    repo = await ensure_clone(project)
+    new_branch = f"agent/{task.id}"
+    base = task.branch_name or project.default_branch
+
+    # Fetch and reset to base, then create the new agent branch from it.
+    await _run(["git", "fetch", "origin", base], cwd=repo)
+    await _run(["git", "checkout", "-B", new_branch, f"origin/{base}"], cwd=repo)
 
     # Apply patch from stdin.
     proc = await asyncio.create_subprocess_exec(
@@ -118,11 +124,11 @@ async def apply_patch_and_push(project: Project, task: Task, patch: str) -> str:
          "commit", "-m", f"agent: {task.title}\n\nTask {task.id}"],
         cwd=repo,
     )
-    code, out, err = await _run(["git", "push", "-u", "origin", branch, "--force-with-lease"], cwd=repo)
+    code, out, err = await _run(["git", "push", "-u", "origin", new_branch, "--force-with-lease"], cwd=repo)
     if code != 0:
         raise RuntimeError(f"git push failed: {err}")
 
-    return branch
+    return new_branch
 
 
 async def open_pull_request(project: Project, task: Task, branch: str, body: str) -> str | None:

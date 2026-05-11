@@ -193,10 +193,17 @@ async def _handle_result(
                         )
                         session.add(gate)
                         task.status = TaskStatus.AWAITING_APPROVAL
+                        # The code is written — promote dependents now so they
+                        # can work from this branch while the merge is reviewed.
+                        await promote_ready_children(
+                            session, task, parent_branch=task.branch_name
+                        )
                     else:
                         task.status = TaskStatus.SUCCEEDED
                         task.result = {"summary": msg.summary, **msg.payload}
-                        await promote_ready_children(session, task)
+                        await promote_ready_children(
+                            session, task, parent_branch=task.branch_name or None
+                        )
 
             if not msg.success:
                 task.status = (

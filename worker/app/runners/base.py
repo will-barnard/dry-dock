@@ -31,6 +31,10 @@ class RunnerContext:
     preferred_model: str | None
     emit_log: Callable[[str, str], Awaitable[None]]  # (stream, body)
     emit_artifact: Callable[[str, str, str, dict], Awaitable[None]]  # (kind, name, content, metadata)
+    # Branch inherited from a parent task (e.g. previous coder in a chain).
+    # When set, runners should use this as the working branch instead of the
+    # project's default branch.
+    branch_name: str | None = None
 
 
 @dataclass
@@ -86,14 +90,23 @@ class BaseRunner:
         chunks: list[str] = []
         tokens_in = 0
         tokens_out = 0
+        log_buf: list[str] = []
         try:
             async for ev in self.provider.chat_stream(self.model, messages):
                 msg = ev.get("message") or {}
                 piece = msg.get("content") or ""
                 if piece:
                     chunks.append(piece)
-                    await self.ctx.emit_log("stdout", piece)
+                    log_buf.append(piece)
+                    # Flush the buffer whenever we hit a newline so the live
+                    # log shows full lines rather than individual tokens.
+                    if "\n" in piece:
+                        await self.ctx.emit_log("stdout", "".join(log_buf))
+                        log_buf = []
                 if ev.get("done"):
+                    if log_buf:
+                        await self.ctx.emit_log("stdout", "".join(log_buf))
+                        log_buf = []
                     tokens_in = ev.get("prompt_eval_count", 0) or 0
                     tokens_out = ev.get("eval_count", 0) or 0
         except Exception as exc:

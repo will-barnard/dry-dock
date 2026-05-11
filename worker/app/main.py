@@ -157,6 +157,7 @@ class Worker:
             preferred_model=grant.preferred_model,
             emit_log=_emit_log,
             emit_artifact=_emit_artifact,
+            branch_name=grant.branch_name,
         )
 
         try:

@@ -143,6 +143,7 @@ async def update_project_settings(
     project_id: uuid.UUID,
     auto_approve_plans: bool = Form(False),
     auto_approve_merges: bool = Form(False),
+    direct_push: bool = Form(False),
     session: AsyncSession = Depends(get_session),
 ):
     project = await session.get(Project, project_id)
@@ -150,6 +151,7 @@ async def update_project_settings(
         raise HTTPException(404, "project not found")
     project.auto_approve_plans = auto_approve_plans
     project.auto_approve_merges = auto_approve_merges
+    project.direct_push = direct_push
     await session.commit()
     return RedirectResponse(f"/projects/{project_id}", status_code=303)
 

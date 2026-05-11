@@ -25,6 +25,7 @@ class ProjectCreate(BaseModel):
     system_prompt: str | None = None
     auto_approve_plans: bool = False
     auto_approve_merges: bool = False
+    direct_push: bool = False
 
 
 class ProjectOut(BaseModel):
@@ -37,6 +38,7 @@ class ProjectOut(BaseModel):
     default_branch: str
     auto_approve_plans: bool
     auto_approve_merges: bool
+    direct_push: bool
     system_prompt: str | None
     created_at: datetime
 

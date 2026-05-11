@@ -107,6 +107,7 @@ class Project(Base):
     default_branch: Mapped[str] = mapped_column(String(255), default="main")
     auto_approve_plans: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_approve_merges: Mapped[bool] = mapped_column(Boolean, default=False)
+    direct_push: Mapped[bool] = mapped_column(Boolean, default=False)
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

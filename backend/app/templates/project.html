@@ -10,7 +10,7 @@
   </div>
   <div class="text-xs text-slate-500 flex items-center gap-2">
     <span class="px-2 py-1 rounded {% if project.auto_approve_plans %}bg-amber-100 text-amber-700{% else %}bg-slate-100{% endif %}">plans: {{ 'auto' if project.auto_approve_plans else 'gated' }}</span>
-    <span class="px-2 py-1 rounded {% if project.auto_approve_merges %}bg-amber-100 text-amber-700{% else %}bg-slate-100{% endif %}">merges: {{ 'auto' if project.auto_approve_merges else 'gated' }}</span>
+    <span class="px-2 py-1 rounded {% if project.direct_push %}bg-emerald-100 text-emerald-700{% elif project.auto_approve_merges %}bg-amber-100 text-amber-700{% else %}bg-slate-100{% endif %}">merges: {{ 'direct push' if project.direct_push else ('auto' if project.auto_approve_merges else 'gated') }}</span>
     <form method="post" action="/projects/{{ project.id }}/delete" class="m-0"
           onsubmit="return confirm('Delete this project and ALL of its tasks? This cannot be undone.');">
       <button class="px-2 py-1 rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200">Delete project</button>
@@ -31,6 +31,12 @@
       <input type="checkbox" name="auto_approve_merges" value="true" class="w-4 h-4 rounded"
              {% if project.auto_approve_merges %}checked{% endif %}>
       Auto-approve <span class="font-mono">merge</span> gates
+    </label>
+    <label class="flex items-center gap-2 text-sm cursor-pointer">
+      <input type="checkbox" name="direct_push" value="true" class="w-4 h-4 rounded"
+             {% if project.direct_push %}checked{% endif %}>
+      <span class="font-medium">Direct push to <span class="font-mono">{{ project.default_branch }}</span></span>
+      <span class="text-slate-400 text-xs">(no branches, no PRs — agents commit straight to main)</span>
     </label>
     <button class="bg-slate-900 text-white text-xs font-medium px-3 py-1.5 rounded">Save</button>
   </form>

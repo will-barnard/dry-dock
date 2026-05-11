@@ -207,7 +207,8 @@ async def _handle_result(
 
                 if msg.success:
                     # Plan tasks need approval before fan-out; code tasks need
-                    # approval before merge (when gated).
+                    # approval before merge (when gated). direct_push projects
+                    # skip all gates — code is already on main.
                     if task.kind.value == "plan" and not project.auto_approve_plans:
                         gate = ApprovalGate(
                             task_id=task.id,
@@ -216,7 +217,7 @@ async def _handle_result(
                         )
                         session.add(gate)
                         task.status = TaskStatus.AWAITING_APPROVAL
-                    elif task.branch_name and not project.auto_approve_merges:
+                    elif task.branch_name and not project.auto_approve_merges and not project.direct_push:
                         gate = ApprovalGate(
                             task_id=task.id,
                             kind=ApprovalGateKind.MERGE,

@@ -1,0 +1,21 @@
+{# Reusable chips for the dashboard. Import with:
+   {% from "_chips.html" import hardware_chip, gpu_chip %} #}
+
+{% macro hardware_chip(hardware_class) %}
+  {% set hc = hardware_class or '' %}
+  <span class="text-[10px] font-medium px-1.5 py-0.5 rounded
+    {% if hc == 'macbook' %}bg-sky-100 text-sky-700
+    {% elif hc == 'mac-mini' %}bg-slate-200 text-slate-700
+    {% elif hc.startswith('windows') %}bg-violet-100 text-violet-700
+    {% elif hc == 'linux' %}bg-orange-100 text-orange-700
+    {% else %}bg-slate-100 text-slate-600
+    {% endif %}">{{ hc or 'unknown' }}</span>
+{% endmacro %}
+
+{% macro gpu_chip(vram_gb, gpu_model) %}
+  {% if vram_gb and vram_gb > 0 %}
+    <span class="text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
+      GPU {{ vram_gb }}GB{% if gpu_model %} · {{ gpu_model }}{% endif %}
+    </span>
+  {% endif %}
+{% endmacro %}

@@ -22,6 +22,8 @@ class RegisterMsg(BaseModel):
     ram_gb: int
     installed_models: list[str]
     max_context: int
+    gpu_vram_gb: int = 0
+    gpu_model: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

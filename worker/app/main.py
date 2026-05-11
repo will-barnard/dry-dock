@@ -105,6 +105,8 @@ class Worker:
             ram_gb=self.settings.ram_gb,
             installed_models=installed,
             max_context=self.settings.max_context,
+            gpu_vram_gb=self.settings.gpu_vram_gb,
+            gpu_model=self.settings.gpu_model,
             metadata={"platform": platform.platform()},
         )
         await self.send(reg.model_dump(mode="json"))

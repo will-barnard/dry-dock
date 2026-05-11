@@ -96,6 +96,8 @@ async def _upsert_worker_row(reg: RegisterMsg) -> Worker:
                     ram_gb=reg.ram_gb,
                     installed_models=reg.installed_models,
                     max_context=reg.max_context,
+                    gpu_vram_gb=reg.gpu_vram_gb,
+                    gpu_model=reg.gpu_model,
                     status=WorkerStatus.ONLINE,
                     last_heartbeat=datetime.now(timezone.utc),
                     connected_at=datetime.now(timezone.utc),
@@ -109,6 +111,8 @@ async def _upsert_worker_row(reg: RegisterMsg) -> Worker:
                 worker.ram_gb = reg.ram_gb
                 worker.installed_models = reg.installed_models
                 worker.max_context = reg.max_context
+                worker.gpu_vram_gb = reg.gpu_vram_gb
+                worker.gpu_model = reg.gpu_model
                 worker.status = WorkerStatus.ONLINE
                 worker.last_heartbeat = datetime.now(timezone.utc)
                 worker.connected_at = datetime.now(timezone.utc)
@@ -230,6 +234,9 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
         installed_models=reg.installed_models,
         max_context=reg.max_context,
         ram_gb=reg.ram_gb,
+        gpu_vram_gb=reg.gpu_vram_gb,
+        gpu_model=reg.gpu_model,
+        hardware_class=reg.hardware_class,
     )
     await registry.add(live)
     await live.send(

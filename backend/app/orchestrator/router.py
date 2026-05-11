@@ -19,6 +19,8 @@ def _worker_can_run(worker: LiveWorker, task: Task, required_model: str | None) 
         return False
     if task.min_context and worker.max_context < task.min_context:
         return False
+    if task.min_vram_gb and (worker.gpu_vram_gb or 0) < task.min_vram_gb:
+        return False
     if required_model and required_model not in worker.installed_models:
         return False
     return True

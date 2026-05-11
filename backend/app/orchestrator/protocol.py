@@ -23,10 +23,15 @@ class RegisterMsg(BaseModel):
     name: str
     pool: str  # planner|coder|reviewer|tester|refactorer|docs|researcher
     hostname: str
-    hardware_class: str  # mac-mini | macbook | linux | ...
+    hardware_class: str  # mac-mini | macbook | windows-rtx3080 | linux | ...
     ram_gb: int
     installed_models: list[str]
     max_context: int
+    # Optional GPU advertising — workers that don't have a dedicated GPU leave
+    # these at the defaults. Used by the router to filter tasks that declare a
+    # min_vram_gb requirement.
+    gpu_vram_gb: int = 0
+    gpu_model: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

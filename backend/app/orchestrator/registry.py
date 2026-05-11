@@ -24,6 +24,9 @@ class LiveWorker:
     installed_models: list[str] = field(default_factory=list)
     max_context: int = 8192
     ram_gb: int = 0
+    gpu_vram_gb: int = 0
+    gpu_model: str | None = None
+    hardware_class: str = ""
     current_task_id: uuid.UUID | None = None
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.auth import AuthRedirect, get_current_user
@@ -14,6 +15,18 @@ from app.config import get_settings
 from app.db import Base, engine
 from app.orchestrator.dispatcher import dispatcher
 from app.routes import auth, dashboard, projects, settings as settings_routes, streams, tasks, workers
+
+
+# Ad-hoc migrations applied on every boot. Idempotent (uses ADD COLUMN IF NOT
+# EXISTS) so it's safe on fresh databases — create_all has already built the
+# columns; ALTER becomes a no-op. On a database that predates a field, the
+# ALTER adds it. We'll graduate this to Alembic when there are enough of them
+# to warrant the ceremony.
+_INLINE_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TABLE workers ADD COLUMN IF NOT EXISTS gpu_vram_gb INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE workers ADD COLUMN IF NOT EXISTS gpu_model VARCHAR(128)",
+    "ALTER TABLE tasks   ADD COLUMN IF NOT EXISTS min_vram_gb INTEGER NOT NULL DEFAULT 0",
+)
 
 
 def _configure_logging() -> None:
@@ -35,10 +48,12 @@ log = structlog.get_logger()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Light bootstrap — create tables if they don't exist. For real schema
-    # evolution we rely on Alembic; this just gives a frictionless first boot.
+    # Light bootstrap — create tables if they don't exist, then run the inline
+    # migrations to pick up any columns added since the first deploy.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        for stmt in _INLINE_MIGRATIONS:
+            await conn.execute(text(stmt))
     await dispatcher.start()
     log.info("orchestrator.started")
     try:

@@ -136,16 +136,19 @@ async def available_models_per_role() -> dict[str, list[str]]:
 
 
 async def workers_per_role() -> dict[str, list[dict]]:
-    """For each role, a list of live worker descriptors {name, models, ram_gb}."""
+    """For each role, a list of live worker descriptors with capability info."""
     out: dict[str, list[dict]] = {role: [] for role in KNOWN_ROLES}
     for worker in await registry.all():
         if worker.pool not in out:
             continue
         out[worker.pool].append({
             "name": worker.name,
+            "hardware_class": worker.hardware_class,
             "installed_models": list(worker.installed_models or ()),
             "ram_gb": worker.ram_gb,
             "max_context": worker.max_context,
+            "gpu_vram_gb": worker.gpu_vram_gb,
+            "gpu_model": worker.gpu_model,
             "current_task_id": str(worker.current_task_id) if worker.current_task_id else None,
         })
     return out

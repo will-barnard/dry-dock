@@ -25,6 +25,8 @@ services:
       MAX_CONTEXT: ${MAX_CONTEXT}                    # advertised max context tokens
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       DEFAULT_MODEL: ${DEFAULT_MODEL:-qwen2.5-coder:32b}
+      GPU_VRAM_GB: ${GPU_VRAM_GB:-0}
+      GPU_MODEL: ${GPU_MODEL:-}
     volumes:
       - ./worktrees:/app/worktrees
     extra_hosts:

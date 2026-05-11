@@ -131,6 +131,7 @@ class Task(Base):
     required_pool: Mapped[str] = mapped_column(String(64))  # planner|coder|reviewer|...
     min_ram_gb: Mapped[int] = mapped_column(Integer, default=0)
     min_context: Mapped[int] = mapped_column(Integer, default=0)
+    min_vram_gb: Mapped[int] = mapped_column(Integer, default=0)
     preferred_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     branch_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     attempt: Mapped[int] = mapped_column(Integer, default=0)
@@ -166,6 +167,8 @@ class Worker(Base):
     ram_gb: Mapped[int] = mapped_column(Integer)
     installed_models: Mapped[list] = mapped_column(JSON, default=list)
     max_context: Mapped[int] = mapped_column(Integer, default=8192)
+    gpu_vram_gb: Mapped[int] = mapped_column(Integer, default=0)
+    gpu_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[WorkerStatus] = mapped_column(
         Enum(WorkerStatus, name="worker_status"), default=WorkerStatus.OFFLINE
     )

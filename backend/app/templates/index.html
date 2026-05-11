@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_chips.html" import hardware_chip, gpu_chip %}
 {% block title %}dry-dock — projects{% endblock %}
 {% block content %}
 <section class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -59,16 +60,22 @@
     <div class="bg-white border border-slate-200 rounded p-4">
       <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">Live workers</h2>
       <div class="mt-2 text-3xl font-mono">{{ live_count }}</div>
-      <ul class="mt-3 text-sm space-y-1">
+      <ul class="mt-3 text-sm space-y-2">
         {% for w in workers %}
-          <li class="flex items-center justify-between">
-            <span class="font-mono">{{ w.name }}</span>
-            <span class="text-xs px-2 py-0.5 rounded
-              {% if w.status.value == 'online' %}bg-emerald-100 text-emerald-700
-              {% elif w.status.value == 'busy' %}bg-amber-100 text-amber-700
-              {% else %}bg-slate-100 text-slate-500{% endif %}">
-              {{ w.pool }} · {{ w.status.value }}
-            </span>
+          <li class="space-y-1">
+            <div class="flex items-center justify-between">
+              <span class="font-mono">{{ w.name }}</span>
+              <span class="text-xs px-2 py-0.5 rounded
+                {% if w.status.value == 'online' %}bg-emerald-100 text-emerald-700
+                {% elif w.status.value == 'busy' %}bg-amber-100 text-amber-700
+                {% else %}bg-slate-100 text-slate-500{% endif %}">
+                {{ w.pool }} · {{ w.status.value }}
+              </span>
+            </div>
+            <div class="flex items-center gap-1 flex-wrap">
+              {{ hardware_chip(w.hardware_class) }}
+              {{ gpu_chip(w.gpu_vram_gb, w.gpu_model) }}
+            </div>
           </li>
         {% else %}
           <li class="text-slate-400 italic text-sm">No workers registered.</li>

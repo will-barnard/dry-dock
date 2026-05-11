@@ -32,7 +32,13 @@ def parse_github_ref(value: str) -> tuple[str, str] | None:
     m = _GH_RE.match(s)
     if not m:
         return None
-    return m.group("owner"), m.group("repo")
+    repo = m.group("repo")
+    # The regex's repo character class includes '.' so it can greedily consume
+    # a trailing .git suffix instead of leaving it for the optional group.
+    # Strip it explicitly so callers that append .git don't produce .git.git.
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    return m.group("owner"), repo
 
 
 def normalize_owner_repo(owner: str, repo: str) -> tuple[str, str] | None:

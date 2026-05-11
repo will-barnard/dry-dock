@@ -44,13 +44,18 @@ def _safe_prefix(value: str) -> str:
 
 def _normalize_ref(owner: str, repo: str) -> tuple[str, str]:
     """If `repo` looks like a URL or owner/repo path, parse it and let the
-    parsed values win over the passed-in `owner`. Otherwise return as-is."""
+    parsed values win over the passed-in `owner`. Otherwise return as-is.
+    Also strips a bare .git suffix that may have been stored in the project row
+    — the clone URL builder always appends .git, so leaving it in produces
+    double-suffixed URLs like zoo-sandbox.git.git."""
     raw = (repo or "").strip()
     if "/" in raw or ":" in raw:
         m = _GH_REF_RE.match(raw)
         if m:
             return m.group("owner"), m.group("repo")
-    return owner, repo
+    if raw.endswith(".git"):
+        raw = raw[:-4]
+    return owner, raw
 
 
 async def _run(cmd: list[str], cwd: Path | None = None) -> tuple[int, str, str]:

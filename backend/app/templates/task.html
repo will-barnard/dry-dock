@@ -157,6 +157,9 @@
             {% if r.model_used %}
               <div class="text-slate-400 mt-0.5">&#x1F9E0; {{ r.model_used }}</div>
             {% endif %}
+            {% if r.error %}
+              <div class="text-rose-600 mt-0.5 break-all">&#x26A0; {{ r.error }}</div>
+            {% endif %}
           </li>
         {% else %}
           <li class="text-slate-400 italic">No runs yet.</li>

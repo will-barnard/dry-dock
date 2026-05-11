@@ -147,6 +147,9 @@ async def _handle_result(
             # Record the model the worker actually used (sent back in the result).
             if msg.model_used and not run.model_used:
                 run.model_used = msg.model_used
+            # Store the failure reason so it shows up in the UI.
+            if not msg.success and not run.error:
+                run.error = msg.summary
 
             if msg.success:
                 # If the task produced a patch artifact, try to apply + open PR.

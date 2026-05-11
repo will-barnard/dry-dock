@@ -133,11 +133,21 @@ def extract_fenced_blocks(text: str) -> list[tuple[str, str]]:
 
 
 def extract_diff(text: str) -> str | None:
-    """Pull the first ```diff``` (or unmarked ```...```) block that looks like a unified diff."""
+    """Pull the first fenced block that looks like a unified diff.
+
+    Accepts blocks tagged as ``diff`` or ``patch``, any block whose content
+    starts with canonical diff headers, *and* any block (regardless of
+    language tag) that contains ``--- `` / ``+++ `` diff hunk markers — which
+    catches models that label their output ```python, ```typescript, etc.
+    """
     for tag, body in extract_fenced_blocks(text):
         if tag.lower() in {"diff", "patch"}:
             return body
-        if body.lstrip().startswith(("diff --git", "--- ", "Index: ")):
+        stripped = body.lstrip()
+        if stripped.startswith(("diff --git", "--- ", "Index: ")):
+            return body
+        # Fallback: any block containing unified diff hunk markers
+        if "--- " in body and "+++ " in body and "\n@@" in body:
             return body
     return None
 

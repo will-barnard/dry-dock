@@ -42,3 +42,6 @@ node_modules/
 
 # Docker
 .docker/
+
+# Per-machine compose overrides (not checked in — see worker/docker-compose.override.example.yml)
+worker/docker-compose.override.yml

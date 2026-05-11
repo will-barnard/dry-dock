@@ -1,0 +1,16 @@
+# Per-machine override. Copy this to docker-compose.override.yml (gitignored)
+# and edit. workers.sh layers it on top of docker-compose.example.yml so your
+# local customizations don't conflict with git pull.
+#
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#   # edit as needed, then:
+#   ./workers.sh restart
+#
+# Example: on the Mac mini that ALSO hosts Beachhead, map the public hostname
+# to the local Docker host so workers don't try to hairpin out and back.
+# Replace drydock.your-domain.com with your actual Beachhead domain.
+
+services:
+  worker:
+    extra_hosts:
+      - "drydock.your-domain.com:host-gateway"

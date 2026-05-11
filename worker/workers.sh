@@ -19,7 +19,16 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 COMPOSE_FILE="docker-compose.example.yml"
+OVERRIDE_FILE="docker-compose.override.yml"
 ENV_DIR="envs"
+
+# Compose -f flags: always the base, plus an override if present.
+compose_files() {
+  printf -- '-f\0%s\0' "$COMPOSE_FILE"
+  if [[ -f "$OVERRIDE_FILE" ]]; then
+    printf -- '-f\0%s\0' "$OVERRIDE_FILE"
+  fi
+}
 
 # ── helpers ─────────────────────────────────────────────────────────
 
@@ -43,7 +52,11 @@ compose_for() {
   local env_file="$1"
   local project="$2"
   shift 2
-  docker compose --env-file "$env_file" -p "$project" -f "$COMPOSE_FILE" "$@"
+  local files=(-f "$COMPOSE_FILE")
+  if [[ -f "$OVERRIDE_FILE" ]]; then
+    files+=(-f "$OVERRIDE_FILE")
+  fi
+  docker compose --env-file "$env_file" -p "$project" "${files[@]}" "$@"
 }
 
 # Build the image once. Compose builds use whatever env file we give it
@@ -51,7 +64,11 @@ compose_for() {
 build_image() {
   local sentinel; sentinel="$(envs | head -1)"
   echo "›› building drydock-worker:latest (one-time per code change)"
-  docker compose --env-file "$sentinel" -f "$COMPOSE_FILE" build
+  local files=(-f "$COMPOSE_FILE")
+  if [[ -f "$OVERRIDE_FILE" ]]; then
+    files+=(-f "$OVERRIDE_FILE")
+  fi
+  docker compose --env-file "$sentinel" "${files[@]}" build
 }
 
 # ── commands ────────────────────────────────────────────────────────

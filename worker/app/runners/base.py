@@ -490,6 +490,56 @@ async def with_workspace(project: dict[str, Any]):
     )
 
 
+async def request_sr_retry(
+    runner: "BaseRunner",
+    original_user_prompt: str,
+    original_response: str,
+    failed_files: list[str],
+    error_message: str,
+    ws: GitWorkspace,
+) -> str:
+    """Re-prompt the model with the *actual* contents of the file(s) it tried
+    to edit, plus a "your SEARCH didn't match — try again" instruction.
+
+    Returns the new response text (possibly empty if the call fails). The
+    caller is responsible for re-parsing SR blocks and re-attempting apply.
+
+    Why this exists: the most common SR-apply failure is the model writing
+    a SEARCH block against a file it only saw listed in the tree, not in
+    loaded content. Once we hand it the real bytes, it nearly always
+    produces a correct block on the second try.
+    """
+    contents = render_file_contents(ws, failed_files, max_bytes_per_file=20000)
+    if not contents.strip():
+        return ""  # nothing to retry with — give up cleanly
+
+    retry_user_msg = (
+        f"Your SEARCH/REPLACE blocks could not be applied:\n\n"
+        f"  {error_message}\n\n"
+        f"This usually means the SEARCH text doesn't match the file byte-for-byte. "
+        f"Below is the ACTUAL current content of the file(s) you targeted. "
+        f"Copy from this verbatim — do not paraphrase — when you write your "
+        f"new SEARCH blocks. Indentation, blank lines, and punctuation all "
+        f"have to match exactly.\n\n"
+        f"{contents}\n\n"
+        f"Now re-emit your SEARCH/REPLACE blocks using the real content above. "
+        f"Same format and rules as before."
+    )
+    messages = [
+        {"role": "system", "content": runner.system_prompt()},
+        {"role": "user", "content": original_user_prompt},
+        {"role": "assistant", "content": original_response},
+        {"role": "user", "content": retry_user_msg},
+    ]
+    try:
+        result = await runner.provider.chat(runner.model, messages)
+    except Exception as exc:
+        log.warning("runner.retry_failed", error=str(exc))
+        return ""
+    msg = result.get("message") or {}
+    return msg.get("content") or ""
+
+
 # Reusable SR-format instruction snippet for runners that edit files.
 SEARCH_REPLACE_INSTRUCTIONS = """\
 When you need to change files, output one or more SEARCH/REPLACE blocks in

@@ -361,6 +361,38 @@ def _is_config_file(path: str) -> bool:
     return any(base.endswith(suffix) for suffix in _CONFIG_SUFFIXES)
 
 
+# Words that show up in every prompt without indicating which files are
+# involved. Pulled out so we don't match a file just because it has "use" or
+# "add" in its name.
+_PROMPT_STOPWORDS = {
+    "the", "and", "for", "with", "that", "this", "from", "into", "out",
+    "your", "you", "are", "but", "any", "all", "can", "has", "have", "had",
+    "use", "uses", "used", "make", "made", "set", "get", "got", "add",
+    "added", "adding", "should", "would", "could", "will", "let", "these",
+    "those", "their", "there", "what", "when", "where", "which", "who",
+    "whose", "why", "how", "new", "old", "now", "also", "just", "only",
+    "some", "more", "less", "than", "then", "very", "such", "each", "both",
+    "task", "code", "file", "files", "test", "tests", "project", "function",
+    "method", "class", "feature", "implement", "implementation", "support",
+    "create", "delete", "update", "modify", "change", "changes", "remove",
+    "ensure", "make", "see", "check", "way", "ways", "must", "need", "needs",
+    "may", "might", "good", "bad", "yes", "not", "be", "is", "as", "if",
+    "or", "to", "in", "on", "by", "of", "at", "an", "a",
+}
+
+
+def _prompt_keywords(prompt: str) -> set[str]:
+    """Pull substantive identifiers out of a prompt for filename matching.
+
+    We tokenize on word boundaries, lower-case, and drop the stopwords above.
+    The minimum length of 3 chars rules out noise like 'js' or 'py' that
+    would otherwise match half the tree.
+    """
+    import re as _re
+    tokens = _re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", prompt or "")
+    return {t.lower() for t in tokens if t.lower() not in _PROMPT_STOPWORDS}
+
+
 def relevant_files_for_prompt(
     prompt: str, all_files: list[str], *, max_files: int = 8
 ) -> list[str]:
@@ -392,6 +424,20 @@ def relevant_files_for_prompt(
         if f in prompt or base in prompt:
             mentioned.append(f)
 
+    # Keyword-based matching: any file whose basename (lower-cased) contains
+    # a substantive word from the prompt. Catches the "task asks for an
+    # income tracker for the Critter app, so load CritterIncome.vue" case
+    # where the file isn't named verbatim in the prompt.
+    keywords = _prompt_keywords(prompt)
+    keyword_matched: list[str] = []
+    if keywords:
+        for f in all_files:
+            if f in config_files or f in mentioned:
+                continue
+            base_lower = _os.path.basename(f).lower()
+            if any(kw in base_lower for kw in keywords):
+                keyword_matched.append(f)
+
     # For small repos every file fits in the prompt; skip the depth/test
     # filter so deeply-nested files (e.g. frontend/src/components/Foo.vue)
     # aren't silently omitted. For large repos, keep the top-level-only rule
@@ -401,6 +447,7 @@ def relevant_files_for_prompt(
         f for f in all_files
         if f not in config_files
         and f not in mentioned
+        and f not in keyword_matched
         and not f.startswith(".")
         and (small_repo or (
             f.count("/") <= 1
@@ -409,8 +456,8 @@ def relevant_files_for_prompt(
     ]
 
     # Order: configs first (always-on awareness), then explicit mentions,
-    # then fillers. Dedupe preserves order.
-    ordered = list(dict.fromkeys(config_files + mentioned + interesting))
+    # then keyword-matched files, then fillers. Dedupe preserves order.
+    ordered = list(dict.fromkeys(config_files + mentioned + keyword_matched + interesting))
     return ordered[:max_files]
 
 

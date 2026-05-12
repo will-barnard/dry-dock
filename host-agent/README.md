@@ -27,16 +27,24 @@ Host windows
 
 ## Install + run
 
+These commands assume your repo lives at `/Users/<you>/workspace/dry-dock`.
+If it's somewhere else, substitute that path everywhere it appears.
+
 ```bash
+# 0. (One-time) note where your clone is, so the rest of these commands work.
+REPO=/Users/$(whoami)/workspace/dry-dock      # ← adjust if yours is elsewhere
+ls "$REPO/host-agent/agent.py"                # should print the path, not error
+
 # 1. Pick a strong token. The dry-dock backend env will use the same value.
 TOKEN=$(openssl rand -hex 32)
 echo "$TOKEN"
 
-# 2. Install the launchd plist, with the token + repo path filled in.
-cp host-agent/com.drydock.host-agent.plist ~/Library/LaunchAgents/
-$EDITOR ~/Library/LaunchAgents/com.drydock.host-agent.plist
-# - Replace /Users/CHANGE_ME/dry-dock with your actual clone path
-# - Replace CHANGE_ME_strong_random_value with $TOKEN above
+# 2. Copy the plist into LaunchAgents, then patch in the real path + token.
+cp "$REPO/host-agent/com.drydock.host-agent.plist" ~/Library/LaunchAgents/
+sed -i '' \
+  -e "s|/Users/CHANGE_ME/dry-dock|$REPO|" \
+  -e "s|CHANGE_ME_strong_random_value|$TOKEN|" \
+  ~/Library/LaunchAgents/com.drydock.host-agent.plist
 
 # 3. Load + start.
 launchctl load -w ~/Library/LaunchAgents/com.drydock.host-agent.plist

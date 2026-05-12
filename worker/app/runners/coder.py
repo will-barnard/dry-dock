@@ -31,6 +31,7 @@ from app.runners.base import (
     extract_search_replace_blocks,
     relevant_files_for_prompt,
     render_file_contents,
+    request_sr_retry,
 )
 
 log = structlog.get_logger()
@@ -99,31 +100,58 @@ class CoderRunner(BaseRunner):
             # actually produced when things go sideways.
             await self.ctx.emit_artifact("text", "raw_response.txt", response_text, {})
 
-            blocks = extract_search_replace_blocks(response_text)
-            if blocks:
+            # Try SR blocks first, with one retry-with-file-contents on apply failure.
+            current_response = response_text
+            last_error: ApplyError | None = None
+            success_payload: tuple[list[str], list[str], str] | None = None
+
+            for attempt in range(2):
+                blocks = extract_search_replace_blocks(current_response)
+                if not blocks:
+                    break  # no SR blocks; fall through to diff fallback below
                 try:
                     modified, warnings = apply_search_replace_blocks(self._ws, blocks)
                 except ApplyError as exc:
-                    await self.ctx.emit_log("stderr", f"SR apply failed: {exc}")
-                    return RunnerResult(
-                        success=False,
-                        summary=f"coder: SEARCH/REPLACE apply failed — {exc}",
+                    last_error = exc
+                    if attempt + 1 >= 2:
+                        break  # out of retries
+                    failed_files = list(dict.fromkeys(b[0] for b in blocks))
+                    await self.ctx.emit_log(
+                        "system",
+                        f"SR apply failed ({exc}); retrying with actual contents of "
+                        f"{len(failed_files)} file(s) loaded into the prompt",
                     )
-                for w in warnings:
-                    await self.ctx.emit_log("stderr", f"warning: {w}")
+                    new_response = await request_sr_retry(
+                        self, self.user_prompt(), current_response,
+                        failed_files, str(exc), self._ws,
+                    )
+                    if not new_response.strip():
+                        await self.ctx.emit_log("stderr", "retry call returned no content")
+                        break
+                    await self.ctx.emit_artifact(
+                        "text", f"retry_response_{attempt + 1}.txt", new_response, {}
+                    )
+                    current_response = new_response
+                    continue
+                else:
+                    for w in warnings:
+                        await self.ctx.emit_log("stderr", f"warning: {w}")
+                    success_payload = (modified, warnings, current_response)
+                    break
 
+            if success_payload is not None:
+                modified, _warnings, success_response = success_payload
                 diff = await self._ws.diff()
                 if not diff.strip():
                     return RunnerResult(
                         success=False,
                         summary="coder: SR blocks parsed but produced no net change",
                     )
-
                 await self.ctx.emit_artifact(
                     "patch", "agent.diff", diff,
                     {"role": "coder", "format": "search-replace", "files": modified},
                 )
-                preface = response_text.split("<<<<<<<", 1)[0].strip()
+                preface = success_response.split("<<<<<<<", 1)[0].strip()
                 if preface:
                     await self.ctx.emit_artifact("text", "plan.txt", preface, {})
                 return RunnerResult(
@@ -136,7 +164,15 @@ class CoderRunner(BaseRunner):
                     },
                 )
 
-            # Fallback: model produced a real unified diff. Use it raw.
+            if last_error is not None:
+                await self.ctx.emit_log("stderr", f"SR apply failed after retry: {last_error}")
+                return RunnerResult(
+                    success=False,
+                    summary=f"coder: SEARCH/REPLACE apply failed — {last_error}",
+                )
+
+            # No SR blocks ever found. Fallback: maybe the model produced a real
+            # unified diff. Use it raw.
             patch = extract_diff(response_text)
             if patch:
                 await self.ctx.emit_artifact(

@@ -28,6 +28,7 @@ from app.orchestrator.registry import LiveWorker, registry
 from app.orchestrator.settings_service import (
     get_all_worker_priorities,
     get_role_model,
+    get_role_model_if_set,
 )
 
 
@@ -67,7 +68,11 @@ async def select_worker_for_task(task: Task) -> LiveWorker | None:
     if not candidates:
         return None
 
-    required_model = task.preferred_model or await get_role_model(task.required_pool)
+    # Only enforce a model constraint when a model was *explicitly* requested
+    # (per-task override or a DB-saved role assignment). An env-default model
+    # is just a suggestion sent to the worker; it must not filter out workers
+    # that have a different perfectly-valid model installed.
+    required_model = task.preferred_model or await get_role_model_if_set(task.required_pool)
     priorities = await get_all_worker_priorities()
 
     # Bucket candidates by priority tier.

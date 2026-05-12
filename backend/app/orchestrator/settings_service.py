@@ -84,6 +84,20 @@ async def get_role_model(role: str) -> str:
     return v or _env_default_for(role)
 
 
+async def get_role_model_if_set(role: str) -> str | None:
+    """Return the DB-configured model for a role, or None if not explicitly set.
+
+    Used by the router so that env-default models don't filter out workers that
+    have a different (perfectly valid) model installed. An explicit DB setting
+    or per-task preferred_model IS a hard requirement; an env default is not.
+    """
+    async with _cache_lock:
+        if not _cache_loaded:
+            async with SessionLocal() as session:
+                await _load_cache(session)
+        return _cache.get(_key(role)) or None
+
+
 async def get_all_role_models() -> dict[str, str]:
     async with _cache_lock:
         if not _cache_loaded:

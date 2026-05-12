@@ -217,8 +217,15 @@ class Worker:
             try:
                 await self.consume_messages()
             finally:
-                self._stop.set()
+                # Cancel the heartbeat task on disconnect — but do NOT set
+                # self._stop. That flag is for clean shutdown via signals;
+                # setting it here would prevent the outer serve() reconnect
+                # loop from spinning back up after a routine disconnect.
                 hb.cancel()
+                try:
+                    await hb
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     async def serve(self) -> None:
         backoff = 1.0

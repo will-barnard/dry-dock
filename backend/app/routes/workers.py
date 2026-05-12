@@ -36,6 +36,7 @@ from app.orchestrator.dispatcher import dispatcher
 from app.orchestrator.event_bus import bus
 from app.orchestrator.git_service import apply_patch_and_push, open_pull_request
 from app.orchestrator.lifecycle import promote_ready_children
+from app.orchestrator.planner import materialize_plan
 from app.orchestrator.protocol import (
     ArtifactMsg,
     ClaimRequestMsg,
@@ -234,6 +235,8 @@ async def _handle_result(
                     else:
                         task.status = TaskStatus.SUCCEEDED
                         task.result = {"summary": msg.summary, **msg.payload}
+                        if task.kind.value == "plan":
+                            await materialize_plan(session, task)
                         await promote_ready_children(
                             session, task, parent_branch=task.branch_name or None
                         )

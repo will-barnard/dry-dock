@@ -67,7 +67,7 @@ async def _load_cache(session: AsyncSession) -> None:
     rows = (await session.execute(select(Setting))).scalars().all()
     new_cache: dict[str, str] = {}
     for row in rows:
-        if row.key.startswith("role_model."):
+        if row.key.startswith("role_model.") or row.key.startswith("worker_priority."):
             new_cache[row.key] = row.value
     _cache.clear()
     _cache.update(new_cache)
@@ -135,8 +135,81 @@ async def available_models_per_role() -> dict[str, list[str]]:
     return {role: sorted(models) for role, models in out.items()}
 
 
+# ── worker priority (per-worker integer; lower = preferred) ────────
+
+
+_DEFAULT_WORKER_PRIORITY = 100
+
+
+def _wp_key(name: str) -> str:
+    return f"worker_priority.{name}"
+
+
+async def get_worker_priority(name: str) -> int:
+    """Return this worker's priority — lower value means more preferred. Default 100."""
+    async with _cache_lock:
+        if not _cache_loaded:
+            async with SessionLocal() as session:
+                await _load_cache(session)
+        raw = _cache.get(_wp_key(name))
+    if raw is None:
+        return _DEFAULT_WORKER_PRIORITY
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_WORKER_PRIORITY
+
+
+async def get_all_worker_priorities() -> dict[str, int]:
+    """Snapshot of every priority currently configured. Workers not present
+    here use the default; callers should default missing names to 100."""
+    async with _cache_lock:
+        if not _cache_loaded:
+            async with SessionLocal() as session:
+                await _load_cache(session)
+        items = {k: v for k, v in _cache.items() if k.startswith("worker_priority.")}
+    out: dict[str, int] = {}
+    for key, value in items.items():
+        name = key[len("worker_priority."):]
+        try:
+            out[name] = int(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+async def set_worker_priority(name: str, priority: int | None) -> None:
+    """Upsert a worker's priority. ``None`` clears the override back to default."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("worker name required")
+    k = _wp_key(name)
+    async with SessionLocal() as session:
+        async with session.begin():
+            if priority is None:
+                existing = await session.get(Setting, k)
+                if existing:
+                    await session.delete(existing)
+            else:
+                stmt = pg_insert(Setting).values(key=k, value=str(int(priority)))
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[Setting.key], set_={"value": str(int(priority))}
+                )
+                await session.execute(stmt)
+    async with _cache_lock:
+        if priority is None:
+            _cache.pop(k, None)
+        else:
+            _cache[k] = str(int(priority))
+    log.info("settings.worker_priority_changed", worker=name, priority=priority)
+
+
 async def workers_per_role() -> dict[str, list[dict]]:
-    """For each role, a list of live worker descriptors with capability info."""
+    """For each role, a list of live worker descriptors with capability info.
+
+    Includes ``priority`` so the settings page can render a per-worker tier.
+    """
+    priorities = await get_all_worker_priorities()
     out: dict[str, list[dict]] = {role: [] for role in KNOWN_ROLES}
     for worker in await registry.all():
         if worker.pool not in out:
@@ -150,7 +223,11 @@ async def workers_per_role() -> dict[str, list[dict]]:
             "gpu_vram_gb": worker.gpu_vram_gb,
             "gpu_model": worker.gpu_model,
             "current_task_id": str(worker.current_task_id) if worker.current_task_id else None,
+            "priority": priorities.get(worker.name, _DEFAULT_WORKER_PRIORITY),
         })
+    # Sort by priority asc (primary first) so the UI shows the failover order.
+    for role, lst in out.items():
+        lst.sort(key=lambda d: (d["priority"], d["name"]))
     return out
 
 

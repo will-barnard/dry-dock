@@ -1,63 +1,99 @@
-"""Task → worker routing.
+"""Task → worker routing with strict-failover priority.
 
-Given a task that needs a particular pool, pick the best live worker from that
-pool given declared capabilities (RAM, max context, installed model). For MVP
-this is a simple filter+sort; later this is where we'd plug in priority queues,
-backpressure, or cross-pool fallback (e.g. coder pool spilling to general).
+Given a task that needs a particular pool, we pick from the workers in that
+pool using two filters:
+
+1. **Capability** — RAM, max context, GPU VRAM, required model. A worker
+   that doesn't have the required model installed can't run the task, and
+   is filtered out before priority is even considered.
+
+2. **Priority tier** — each worker has a per-name priority integer (lower
+   = preferred), set on the Settings page. The router groups capable
+   workers by tier and walks tiers low → high. Within a tier we apply
+   normal selection (skip busy, prefer more context/RAM).
+
+   The failover semantic the user wants is "if my primary is online, the
+   backup stays idle." So when the lowest tier has at least one *capable*
+   worker — even if they're all currently busy — we DON'T fall through to
+   the next tier. We wait. Only when no capable worker exists at the
+   current tier (offline, wrong model, missing GPU, …) do we drop to the
+   next tier of backups.
 """
 from __future__ import annotations
 
+from collections import defaultdict
+
 from app.models import Task
 from app.orchestrator.registry import LiveWorker, registry
-from app.orchestrator.settings_service import get_role_model
+from app.orchestrator.settings_service import (
+    get_all_worker_priorities,
+    get_role_model,
+)
 
 
-def _model_available(installed: list[str], required: str) -> bool:
-    """Return True if `required` is satisfied by any installed model.
+_DEFAULT_PRIORITY = 100
 
-    Ollama returns full quantization tags (e.g. qwen2.5-coder:32b-instruct-q4_K_M)
-    while the required model is typically the short form (qwen2.5-coder:32b).
-    Accept a match if any installed model name starts with required (case-insensitive),
-    which covers both exact matches and quantization-suffixed variants.
+
+def _worker_compatible(
+    worker: LiveWorker, task: Task, required_model: str | None
+) -> bool:
+    """Does this worker *theoretically* satisfy the task's capability needs?
+
+    Ignores busy state. Used to decide whether to wait for a busy primary
+    or fall through to a backup tier.
     """
-    req = required.lower()
-    return any(m.lower() == req or m.lower().startswith(req + "-") for m in installed)
-
-
-def _worker_can_run(worker: LiveWorker, task: Task, required_model: str | None) -> bool:
-    if worker.current_task_id is not None:
-        return False
     if task.min_ram_gb and worker.ram_gb < task.min_ram_gb:
         return False
     if task.min_context and worker.max_context < task.min_context:
         return False
     if task.min_vram_gb and (worker.gpu_vram_gb or 0) < task.min_vram_gb:
         return False
-    if required_model and not _model_available(worker.installed_models, required_model):
+    if required_model and required_model not in worker.installed_models:
         return False
     return True
 
 
+def _worker_can_run(
+    worker: LiveWorker, task: Task, required_model: str | None
+) -> bool:
+    """Is this worker available to claim this task RIGHT NOW?"""
+    if worker.current_task_id is not None:
+        return False
+    return _worker_compatible(worker, task, required_model)
+
+
 async def select_worker_for_task(task: Task) -> LiveWorker | None:
     candidates = await registry.by_pool(task.required_pool)
-    # Only enforce model availability when the task explicitly requests a
-    # specific model. If preferred_model is unset, any worker in the pool can
-    # claim the job and will run it with its own DEFAULT_MODEL.
-    required_model = task.preferred_model or None
-    # Check role setting only if no per-task model is set AND the role has a
-    # non-default override saved in app_settings (explicit admin choice).
-    if not required_model:
-        role_model = await get_role_model(task.required_pool)
-        # Only gate on the role model if at least one pool worker actually has
-        # it installed — avoids blocking dispatch when the setting is the
-        # backend env default and the workers use a different local model.
-        pool_workers = await registry.by_pool(task.required_pool)
-        if role_model and any(_model_available(w.installed_models, role_model) for w in pool_workers):
-            required_model = role_model
-    candidates = [w for w in candidates if _worker_can_run(w, task, required_model)]
     if not candidates:
         return None
-    # Prefer workers with the largest declared context (proxy for capability)
-    # and most RAM headroom. Tie-break is arbitrary.
-    candidates.sort(key=lambda w: (w.max_context, w.ram_gb), reverse=True)
-    return candidates[0]
+
+    required_model = task.preferred_model or await get_role_model(task.required_pool)
+    priorities = await get_all_worker_priorities()
+
+    # Bucket candidates by priority tier.
+    tiers: dict[int, list[LiveWorker]] = defaultdict(list)
+    for w in candidates:
+        tiers[priorities.get(w.name, _DEFAULT_PRIORITY)].append(w)
+
+    # Walk tiers from lowest priority value (most preferred) up. The first
+    # tier that contains a capable worker is the only tier we consider —
+    # even if every capable worker in it is currently busy, we wait
+    # rather than drop to a backup tier. That's the strict-failover rule.
+    for tier_val in sorted(tiers.keys()):
+        tier_workers = tiers[tier_val]
+        if not any(_worker_compatible(w, task, required_model) for w in tier_workers):
+            # No worker here can run this task at all — try the next tier.
+            continue
+
+        free = [w for w in tier_workers if _worker_can_run(w, task, required_model)]
+        if not free:
+            # Capable workers exist in this tier but they're all busy.
+            # Wait for them — do NOT fall through to a lower tier.
+            return None
+
+        # Within the tier, prefer larger context window then more RAM as a
+        # cheap proxy for "more capable". Tie-break is arbitrary but stable.
+        free.sort(key=lambda w: (w.max_context, w.ram_gb), reverse=True)
+        return free[0]
+
+    return None

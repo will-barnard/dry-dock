@@ -134,10 +134,32 @@ class PlannerRunner(BaseRunner):
         )
 
     async def finalize(self, response_text: str) -> RunnerResult:
+        # Always save the original response so the user can inspect what the
+        # model actually said when parsing fails.
+        await self.ctx.emit_artifact("text", "raw_response.txt", response_text, {})
+
         parsed = self._extract_plan_object(response_text)
+
+        # If the first response didn't parse, give the model exactly one
+        # more shot with an explicit "use this JSON shape" reminder.
         if parsed is None:
-            await self.ctx.emit_log("stderr", "planner produced no valid JSON object")
-            await self.ctx.emit_artifact("text", "raw_response.txt", response_text, {})
+            await self.ctx.emit_log(
+                "system",
+                "first response didn't parse as a JSON plan object; re-prompting "
+                "with a strict format reminder",
+            )
+            retry_response = await self._format_retry(response_text)
+            if retry_response:
+                await self.ctx.emit_artifact(
+                    "text", "retry_response_1.txt", retry_response, {}
+                )
+                parsed = self._extract_plan_object(retry_response)
+                if parsed is not None:
+                    # Use the retry response as the canonical one downstream.
+                    response_text = retry_response
+
+        if parsed is None:
+            await self.ctx.emit_log("stderr", "planner produced no valid JSON object after retry")
             return RunnerResult(
                 success=False,
                 summary="planner: could not parse JSON plan from response",
@@ -147,7 +169,6 @@ class PlannerRunner(BaseRunner):
         tasks = parsed.get("tasks") or []
         if not isinstance(tasks, list):
             await self.ctx.emit_log("stderr", "planner: tasks field is not a list")
-            await self.ctx.emit_artifact("text", "raw_response.txt", response_text, {})
             return RunnerResult(success=False, summary="planner: tasks field is not a list")
 
         # The summary artifact carries everything materialize_plan needs — it
@@ -162,7 +183,6 @@ class PlannerRunner(BaseRunner):
         # dashboard's artifact list (and is grep-able from outside).
         if contract:
             await self.ctx.emit_artifact("text", "contract.md", contract, {"role": "contract"})
-        await self.ctx.emit_artifact("text", "raw_response.txt", response_text, {})
 
         return RunnerResult(
             success=True,
@@ -170,6 +190,47 @@ class PlannerRunner(BaseRunner):
                     f"{' + contract' if contract else ' (no contract)'}",
             payload={"plan_size": len(tasks), "has_contract": bool(contract)},
         )
+
+    async def _format_retry(self, original_response: str) -> str:
+        """Re-prompt the planner with the original conversation plus a strict
+        format reminder. Returns the new response text (empty on failure).
+
+        Multi-turn: [system, original user, original assistant, retry user].
+        """
+        retry_user_msg = (
+            "Your previous response didn't parse as the required JSON shape. "
+            "Emit ONLY a single ```json fenced code block containing an object "
+            "with these exact keys:\n\n"
+            "```json\n"
+            "{\n"
+            "  \"contract\": \"...markdown spec...\",\n"
+            "  \"tasks\": [\n"
+            "    {\n"
+            "      \"kind\": \"code\",\n"
+            "      \"title\": \"...\",\n"
+            "      \"prompt\": \"...\",\n"
+            "      \"target_files\": [\"path/to/file\"],\n"
+            "      \"depends_on\": null\n"
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "```\n\n"
+            "No prose outside the JSON block. Re-emit your plan now in that "
+            "exact shape."
+        )
+        messages = [
+            {"role": "system", "content": self.system_prompt()},
+            {"role": "user", "content": self.user_prompt()},
+            {"role": "assistant", "content": original_response},
+            {"role": "user", "content": retry_user_msg},
+        ]
+        try:
+            result = await self.provider.chat(self.model, messages)
+        except Exception as exc:
+            log.warning("planner.format_retry_failed", error=str(exc))
+            return ""
+        msg = result.get("message") or {}
+        return msg.get("content") or ""
 
     @staticmethod
     def _extract_plan_object(text: str) -> dict | None:

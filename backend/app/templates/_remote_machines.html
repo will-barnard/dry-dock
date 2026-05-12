@@ -1,0 +1,72 @@
+{% from "_chips.html" import hardware_chip %}
+<div class="bg-white border border-slate-200 rounded p-4" id="remote-machines">
+  <div class="flex items-center justify-between">
+    <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">Remote machines</h2>
+    <button
+      hx-get="/partials/remote-machines"
+      hx-target="#remote-machines"
+      hx-swap="outerHTML"
+      class="text-xs text-slate-500 hover:text-slate-900"
+      title="Re-check status">↻</button>
+  </div>
+
+  {% if machines %}
+    <ul class="mt-3 space-y-3 text-sm">
+      {% for m in machines %}
+        <li class="space-y-1">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-medium">{{ m.display_name }}</span>
+            <span class="text-xs px-2 py-0.5 rounded
+              {% if m.online %}bg-emerald-100 text-emerald-700
+              {% else %}bg-slate-100 text-slate-500{% endif %}">
+              {{ 'online' if m.online else 'offline' }}
+              <span class="text-slate-400">({{ m.source }})</span>
+            </span>
+          </div>
+          <div class="flex items-center gap-1 flex-wrap text-[10px] text-slate-500">
+            {% if m.hardware_class %}{{ hardware_chip(m.hardware_class) }}{% endif %}
+            <span class="font-mono">{{ m.mac }}</span>
+            {% if m.ssh_host %}<span class="font-mono">· ssh: {{ m.ssh_host }}</span>{% endif %}
+          </div>
+          <div class="flex items-center gap-2 pt-1">
+            <form
+              hx-post="/machines/{{ m.name }}/wake"
+              hx-target="#remote-machines"
+              hx-swap="outerHTML"
+              hx-disabled-elt="this button"
+              class="m-0">
+              <button
+                {% if m.online %}disabled{% endif %}
+                class="text-xs px-2 py-1 rounded border
+                  {% if m.online %}bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed
+                  {% else %}bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200{% endif %}">
+                Wake
+              </button>
+            </form>
+            <form
+              hx-post="/machines/{{ m.name }}/shutdown"
+              hx-target="#remote-machines"
+              hx-swap="outerHTML"
+              hx-confirm="Shut down {{ m.display_name }}?"
+              hx-disabled-elt="this button"
+              class="m-0">
+              <button
+                {% if not m.online or not m.ssh_host %}disabled{% endif %}
+                class="text-xs px-2 py-1 rounded border
+                  {% if not m.online or not m.ssh_host %}bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed
+                  {% else %}bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200{% endif %}">
+                Shut down
+              </button>
+            </form>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="mt-2 text-xs text-slate-500">
+      No machines configured. Set <code class="font-mono">REMOTE_MACHINES_JSON</code>
+      in the backend env and install the host agent on the Mac mini — see
+      <code class="font-mono">host-agent/README.md</code>.
+    </p>
+  {% endif %}
+</div>

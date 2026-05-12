@@ -14,7 +14,16 @@ from app.auth import AuthRedirect, get_current_user
 from app.config import get_settings
 from app.db import Base, engine
 from app.orchestrator.dispatcher import dispatcher
-from app.routes import auth, dashboard, projects, settings as settings_routes, streams, tasks, workers
+from app.routes import (
+    auth,
+    dashboard,
+    projects,
+    remote_machines as remote_machines_routes,
+    settings as settings_routes,
+    streams,
+    tasks,
+    workers,
+)
 
 
 # Ad-hoc migrations applied on every boot. Idempotent (uses ADD COLUMN IF NOT
@@ -119,7 +128,9 @@ app.include_router(tasks.router, dependencies=_auth)
 app.include_router(workers.http_router, dependencies=_auth)
 app.include_router(streams.router, dependencies=_auth)
 app.include_router(settings_routes.api_router, dependencies=_auth)
+app.include_router(remote_machines_routes.api_router, dependencies=_auth)
 
 # HTMX server-rendered views
 app.include_router(dashboard.router, dependencies=_auth)
 app.include_router(settings_routes.router, dependencies=_auth)
+app.include_router(remote_machines_routes.router, dependencies=_auth)

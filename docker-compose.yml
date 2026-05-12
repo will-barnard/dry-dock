@@ -32,6 +32,9 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       GITHUB_USERNAME: ${GITHUB_USERNAME}
       DRYDOCK_BASE_URL: ${DRYDOCK_BASE_URL}
+      DRYDOCK_HOST_AGENT_URL: ${DRYDOCK_HOST_AGENT_URL:-http://host.docker.internal:8088}
+      DRYDOCK_HOST_AGENT_TOKEN: ${DRYDOCK_HOST_AGENT_TOKEN:-}
+      REMOTE_MACHINES_JSON: ${REMOTE_MACHINES_JSON:-[]}
       DEFAULT_CODE_MODEL: qwen2.5-coder:32b
       DEFAULT_PLANNER_MODEL: qwen2.5-coder:32b
       LOG_LEVEL: INFO
@@ -42,6 +45,12 @@ services:
         condition: service_healthy
     volumes:
       - repos_data:/var/lib/drydock/repos
+    # Backend reaches the host-side WoL/shutdown agent at host.docker.internal.
+    # Docker Desktop for Mac wires this automatically; the explicit entry is
+    # belt-and-suspenders in case Beachhead runs the daemon under colima or
+    # plain Docker Engine where it isn't auto-provisioned.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - internal
 

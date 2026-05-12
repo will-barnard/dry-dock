@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     # the orchestrator over plain HTTP for local dev.
     session_https_only: bool = Field(default=True, alias="SESSION_HTTPS_ONLY")
 
+    # Remote machine wake/shutdown — see host-agent/README.md
+    host_agent_url: str = Field(
+        default="http://host.docker.internal:8088", alias="DRYDOCK_HOST_AGENT_URL"
+    )
+    host_agent_token: str = Field(default="", alias="DRYDOCK_HOST_AGENT_TOKEN")
+    remote_machines_json: str = Field(default="[]", alias="REMOTE_MACHINES_JSON")
+
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
 

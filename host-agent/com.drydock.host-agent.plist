@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd plist for the dry-dock host agent.
+
+  Install:
+    1. Copy this file to ~/Library/LaunchAgents/com.drydock.host-agent.plist
+    2. Edit the EnvironmentVariables block: set DRYDOCK_HOST_AGENT_TOKEN to a
+       strong random value, and adjust the path to agent.py and python3 to
+       match where your repo lives.
+    3. launchctl load -w ~/Library/LaunchAgents/com.drydock.host-agent.plist
+    4. Verify with: curl http://127.0.0.1:8088/healthz
+
+  Logs land in /tmp/drydock-host-agent.{out,err}.log
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.drydock.host-agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/env</string>
+        <string>python3</string>
+        <string>/Users/CHANGE_ME/dry-dock/host-agent/agent.py</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DRYDOCK_HOST_AGENT_TOKEN</key>
+        <string>CHANGE_ME_strong_random_value</string>
+        <key>DRYDOCK_HOST_AGENT_PORT</key>
+        <string>8088</string>
+        <key>DRYDOCK_HOST_AGENT_BIND</key>
+        <string>0.0.0.0</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/drydock-host-agent.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/drydock-host-agent.err.log</string>
+</dict>
+</plist>

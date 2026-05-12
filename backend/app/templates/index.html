@@ -58,6 +58,16 @@
   </div>
 
   <aside class="space-y-4">
+    {# Lazy-loaded so the homepage doesn't block on the host-agent ping. #}
+    <div hx-get="/partials/remote-machines"
+         hx-trigger="load"
+         hx-swap="outerHTML">
+      <div class="bg-white border border-slate-200 rounded p-4">
+        <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">Remote machines</h2>
+        <p class="mt-2 text-xs text-slate-400 italic">loading…</p>
+      </div>
+    </div>
+
     <div class="bg-white border border-slate-200 rounded p-4">
       <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">Live workers</h2>
       <div class="mt-2 text-3xl font-mono">{{ live_count }}</div>

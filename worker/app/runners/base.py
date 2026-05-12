@@ -490,6 +490,47 @@ async def with_workspace(project: dict[str, Any]):
     )
 
 
+async def request_format_retry(
+    runner: "BaseRunner",
+    original_user_prompt: str,
+    original_response: str,
+) -> str:
+    """Re-prompt when the model produced no SEARCH/REPLACE blocks at all.
+
+    Smaller models (especially when writing docs or markdown) tend to slip
+    into emitting the content directly without the SR wrapper. Re-asking with
+    an explicit "format that as SR blocks" instruction nearly always fixes it.
+    """
+    retry_msg = (
+        "I don't see any SEARCH/REPLACE blocks in your response. dry-dock "
+        "requires changes expressed in that format — your prose answer can't "
+        "be applied as-is. Please re-emit the same changes using "
+        "SEARCH/REPLACE blocks:\n\n"
+        "  path/to/file\n"
+        "  <<<<<<< SEARCH\n"
+        "  (current text, or empty for a new file)\n"
+        "  =======\n"
+        "  (new text, or empty to delete the file)\n"
+        "  >>>>>>> REPLACE\n\n"
+        "For a brand-new file, leave SEARCH empty. Wrap each file you want "
+        "to change in its own block. Output ONLY the blocks (a one-line "
+        "summary above them is fine), no prose explanations between them."
+    )
+    messages = [
+        {"role": "system", "content": runner.system_prompt()},
+        {"role": "user", "content": original_user_prompt},
+        {"role": "assistant", "content": original_response},
+        {"role": "user", "content": retry_msg},
+    ]
+    try:
+        result = await runner.provider.chat(runner.model, messages)
+    except Exception as exc:
+        log.warning("runner.format_retry_failed", error=str(exc))
+        return ""
+    msg = result.get("message") or {}
+    return msg.get("content") or ""
+
+
 async def request_sr_retry(
     runner: "BaseRunner",
     original_user_prompt: str,

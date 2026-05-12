@@ -21,6 +21,17 @@ from app.util.github import normalize_owner_repo
 
 log = structlog.get_logger()
 
+# One asyncio Lock per project slug. Serializes apply_patch_and_push so two
+# tasks completing at the same time don't stomp each other's working-tree state
+# in the shared backend clone directory.
+_repo_locks: dict[str, asyncio.Lock] = {}
+
+
+def _repo_lock(project: Project) -> asyncio.Lock:
+    if project.slug not in _repo_locks:
+        _repo_locks[project.slug] = asyncio.Lock()
+    return _repo_locks[project.slug]
+
 
 def _repo_dir(project: Project) -> Path:
     settings = get_settings()
@@ -270,6 +281,15 @@ async def apply_patch_and_push(
     - Fresh / standalone task: create ``agent/<task.id>`` off the default
       branch, push, and return ``(branch, True)`` so the caller opens the PR.
     """
+    # Acquire a per-project lock so concurrent tasks don't clobber each
+    # other's working-tree state in the shared backend clone directory.
+    async with _repo_lock(project):
+        return await _apply_patch_and_push_locked(project, task, patch)
+
+
+async def _apply_patch_and_push_locked(
+    project: Project, task: Task, patch: str
+) -> tuple[str, bool]:
     repo = await ensure_clone(project)
 
     if project.direct_push:

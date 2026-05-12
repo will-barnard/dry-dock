@@ -44,9 +44,9 @@ class DocsRunner(BaseRunner):
         docs = [
             f for f in all_files
             if f.lower().endswith((".md", ".rst", ".adoc")) or f.lower().startswith("docs/")
-        ][:80]
-        prompt_files = relevant_files_for_prompt(self.ctx.prompt, all_files, max_files=6)
-        selected = list(dict.fromkeys(prompt_files + docs[:4]))
+        ]
+        prompt_files = relevant_files_for_prompt(self.ctx.prompt, all_files, max_files=20)
+        selected = list(dict.fromkeys(prompt_files + docs))
         self._file_section = render_file_contents(ws, selected)
         self._docs_summary = "\n".join(docs) or "(no doc files found)"
 

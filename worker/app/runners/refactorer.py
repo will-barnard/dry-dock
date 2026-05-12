@@ -42,11 +42,9 @@ class RefactorerRunner(BaseRunner):
             f for f in ws.list_files()
             if not f.startswith((".git/", "node_modules/", ".venv/", "dist/", "build/"))
         ]
-        self._target_files = relevant_files_for_prompt(self.ctx.prompt, all_files, max_files=8)
+        self._target_files = relevant_files_for_prompt(self.ctx.prompt, all_files, max_files=20)
         self._file_section = render_file_contents(ws, self._target_files)
-        self._tree = "\n".join(all_files[:200])
-        if len(all_files) > 200:
-            self._tree += f"\n… and {len(all_files) - 200} more files"
+        self._tree = "\n".join(all_files)
 
     def user_prompt(self) -> str:
         return (

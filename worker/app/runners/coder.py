@@ -67,15 +67,12 @@ class CoderRunner(BaseRunner):
         # Pick a handful of files the model most likely needs to see, then load
         # their contents into the prompt. Without this the model is editing
         # blind and produces SEARCH blocks that don't match anything.
-        self._target_files = relevant_files_for_prompt(self.ctx.prompt, all_files, max_files=8)
+        self._target_files = relevant_files_for_prompt(self.ctx.prompt, all_files, max_files=20)
         self._file_section = render_file_contents(ws, self._target_files)
 
         # Cap the tree dump independently — it gives the model awareness of
         # files it may want to reference even if it didn't see their content.
-        tree_head = all_files[:200]
-        self._tree = "\n".join(tree_head)
-        if len(all_files) > 200:
-            self._tree += f"\n… and {len(all_files) - 200} more files"
+        self._tree = "\n".join(all_files)
 
         await self.ctx.emit_log(
             "system",

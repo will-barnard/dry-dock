@@ -392,23 +392,30 @@ def relevant_files_for_prompt(
         if f in prompt or base in prompt:
             mentioned.append(f)
 
+    # For small repos every file fits in the prompt; skip the depth/test
+    # filter so deeply-nested files (e.g. frontend/src/components/Foo.vue)
+    # aren't silently omitted. For large repos, keep the top-level-only rule
+    # to avoid flooding the context with unrelated code.
+    small_repo = len(all_files) <= max_files * 6
     interesting = [
         f for f in all_files
         if f not in config_files
         and f not in mentioned
-        and f.count("/") <= 1
         and not f.startswith(".")
-        and not any(p in f.lower() for p in ("test_", "_test.", "/tests/", "/test/"))
+        and (small_repo or (
+            f.count("/") <= 1
+            and not any(p in f.lower() for p in ("test_", "_test.", "/tests/", "/test/"))
+        ))
     ]
 
     # Order: configs first (always-on awareness), then explicit mentions,
-    # then top-level fillers. Dedupe preserves order.
+    # then fillers. Dedupe preserves order.
     ordered = list(dict.fromkeys(config_files + mentioned + interesting))
     return ordered[:max_files]
 
 
 def render_file_contents(
-    ws: GitWorkspace, files: list[str], *, max_bytes_per_file: int = 8000
+    ws: GitWorkspace, files: list[str], *, max_bytes_per_file: int = 24000
 ) -> str:
     """Format selected file contents as a section the model can refer to.
 

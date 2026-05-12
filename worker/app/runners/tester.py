@@ -48,11 +48,9 @@ class TesterRunner(BaseRunner):
             if not f.startswith((".git/", "node_modules/", ".venv/", "dist/", "build/"))
         ]
         # Existing test files are the most useful context for a tester.
-        test_files = [f for f in all_files if "test" in f.lower()][:80]
-        prompt_files = relevant_files_for_prompt(self.ctx.prompt, all_files, max_files=6)
-        # Merge prompt-mentioned + first few existing tests so the model sees both
-        # the conventions in use and the production code it's testing.
-        selected = list(dict.fromkeys(prompt_files + test_files[:4]))
+        test_files = [f for f in all_files if "test" in f.lower()]
+        prompt_files = relevant_files_for_prompt(self.ctx.prompt, all_files, max_files=20)
+        selected = list(dict.fromkeys(prompt_files + test_files))
         self._file_section = render_file_contents(self._ws, selected)
         self._tests_summary = "\n".join(test_files) or "(no existing tests found)"
         await self.ctx.emit_log(

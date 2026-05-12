@@ -31,6 +31,7 @@ from app.routes import (
 # columns; ALTER becomes a no-op. On a database that predates a field, the
 # ALTER adds it. We'll graduate this to Alembic when there are enough of them
 # to warrant the ceremony.
+# Regular DDL migrations — all run inside a single transaction.
 _INLINE_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE workers ADD COLUMN IF NOT EXISTS gpu_vram_gb INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE workers ADD COLUMN IF NOT EXISTS gpu_model VARCHAR(128)",
@@ -38,12 +39,15 @@ _INLINE_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE runs    ADD COLUMN IF NOT EXISTS worker_name VARCHAR(255)",
     "ALTER TABLE runs    ADD COLUMN IF NOT EXISTS model_used  VARCHAR(128)",
     "ALTER TABLE projects ADD COLUMN IF NOT EXISTS direct_push BOOLEAN NOT NULL DEFAULT FALSE",
-    # Validator pool. PG 10+ supports ADD VALUE IF NOT EXISTS on an enum type
-    # outside a transaction. SQLAlchemy already runs DDL outside transactions
-    # via run_sync; if a future Postgres rejects this in-tx, split into a
-    # standalone connection (autocommit) before the create_all step.
-    "ALTER TYPE  task_kind ADD VALUE IF NOT EXISTS 'validate'",
     "ALTER TABLE projects ADD COLUMN IF NOT EXISTS validate_commands JSON DEFAULT '[]'::json",
+)
+
+# ALTER TYPE … ADD VALUE cannot run inside a transaction block in PostgreSQL.
+# Run these separately using an autocommit connection BEFORE create_all so that
+# newly-added enum values are available when SQLAlchemy inspects the schema.
+# SQLAlchemy stores enum members by NAME (uppercase), so these must match.
+_ENUM_MIGRATIONS: tuple[str, ...] = (
+    "ALTER TYPE task_kind ADD VALUE IF NOT EXISTS 'VALIDATE'",
 )
 
 
@@ -66,12 +70,20 @@ log = structlog.get_logger()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Light bootstrap — create tables if they don't exist, then run the inline
-    # migrations to pick up any columns added since the first deploy.
+    # 1. Run ALTER TYPE … ADD VALUE statements with AUTOCOMMIT — PostgreSQL
+    #    forbids these inside a transaction block.
+    async with engine.connect() as conn:
+        await conn.execution_options(isolation_level="AUTOCOMMIT")
+        for stmt in _ENUM_MIGRATIONS:
+            await conn.execute(text(stmt))
+
+    # 2. Create tables (idempotent) and run regular column migrations inside a
+    #    single transaction.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         for stmt in _INLINE_MIGRATIONS:
             await conn.execute(text(stmt))
+
     await dispatcher.start()
     log.info("orchestrator.started")
     try:

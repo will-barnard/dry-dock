@@ -23,6 +23,7 @@ from app.orchestrator.settings_service import (
     available_models_per_role,
     get_all_role_models,
     set_role_model,
+    set_worker_priority,
     workers_per_role,
 )
 
@@ -61,15 +62,24 @@ async def settings_submit(
     request: Request,
     user: User = Depends(get_current_user),
 ) -> RedirectResponse:
-    # Form arrives as `model.<role>=<value>` pairs. We process the whole batch
-    # in one shot so the page never lands in a partially-saved state.
+    # Form arrives as `model.<role>=<value>` and `priority.<worker>=<int>` pairs.
     form = await request.form()
     for role in KNOWN_ROLES:
         field = f"model.{role}"
         if field in form:
             value = (form.get(field) or "").strip()
-            # An empty value clears the role override and falls back to env default.
             await set_role_model(role, value or None)
+    # Worker priority inputs — iterate ALL form keys so we pick up any worker
+    # name without having to know the list ahead of time.
+    for key in form.keys():
+        if key.startswith("priority."):
+            worker_name = key[len("priority."):]
+            raw = (form.get(key) or "").strip()
+            try:
+                prio = int(raw)
+            except (ValueError, TypeError):
+                prio = None
+            await set_worker_priority(worker_name, prio)
     return RedirectResponse("/settings", status_code=303)
 
 

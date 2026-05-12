@@ -47,7 +47,7 @@
             </td>
             <td class="py-3 px-2 text-xs">
               {% if row.workers %}
-                <ul class="space-y-2">
+                <ul class="space-y-3">
                   {% for w in row.workers %}
                     <li>
                       <div class="flex items-center gap-2 flex-wrap">
@@ -62,6 +62,17 @@
                       {% if w.installed_models %}
                         <div class="text-slate-400 ml-2">{{ w.installed_models | join(', ') }}</div>
                       {% endif %}
+                      <div class="mt-1 flex items-center gap-1.5">
+                        <label class="text-slate-500" title="Lower = preferred. Primary workers should be 1; backup workers 100. If any capable primary is online, backups stay idle.">Priority</label>
+                        <input
+                          type="number"
+                          name="priority.{{ w.name }}"
+                          value="{{ w.priority }}"
+                          min="1" max="999"
+                          class="w-16 border border-slate-300 rounded px-1.5 py-0.5 font-mono text-xs"
+                          title="Lower = more preferred. Backups only run when all lower-priority workers are offline or incapable."
+                        >
+                      </div>
                     </li>
                   {% endfor %}
                 </ul>
@@ -81,7 +92,23 @@
 </section>
 
 <section class="mt-6 bg-white border border-slate-200 rounded p-4">
-  <h2 class="text-lg font-semibold">Fallback chain</h2>
+  <h2 class="text-lg font-semibold">Worker priority &amp; failover</h2>
+  <p class="text-sm text-slate-600 mt-1">
+    Each worker has a <strong>priority</strong> integer (lower = more preferred). The dispatcher groups
+    workers in a pool by priority tier and always tries the lowest tier first.
+    <br><br>
+    <strong>Strict failover rule:</strong> if any worker in the preferred tier is <em>capable</em> of
+    the task (right model, enough RAM/VRAM) — even if it's currently busy — the dispatcher waits for it
+    rather than handing the job to a backup. Backup workers (higher priority number) only pick up work
+    when <em>no</em> capable primary is available.
+    <br><br>
+    Recommended: set your primary (PC) workers to <span class="font-mono">1</span> and your backup
+    (MacBook) workers to <span class="font-mono">100</span>.
+  </p>
+</section>
+
+<section class="mt-6 bg-white border border-slate-200 rounded p-4">
+  <h2 class="text-lg font-semibold">Model fallback chain</h2>
   <ol class="mt-2 text-sm text-slate-700 list-decimal ml-5 space-y-1">
     <li>Per-task <span class="font-mono">preferred_model</span> if set on the task.</li>
     <li>Per-role assignment chosen above (saved to <span class="font-mono">app_settings</span>).</li>

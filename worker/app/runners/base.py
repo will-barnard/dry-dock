@@ -281,7 +281,21 @@ def apply_search_replace_blocks(
             continue
 
         if not path.exists():
-            raise ApplyError(f"file does not exist: {rel}")
+            # The model targeted a file that isn't there. The intent — judging
+            # by the populated REPLACE — is almost always "this is what the
+            # file should look like." Create it from REPLACE and warn so the
+            # operator can see what happened. The model's imagined SEARCH
+            # content gets discarded; whatever it thought was in the file
+            # never existed in the first place.
+            warnings.append(
+                f"{rel}: model targeted a non-existing file with a populated "
+                f"SEARCH; treated as create-from-REPLACE (model's SEARCH "
+                f"discarded)"
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(replace, encoding="utf-8")
+            modified.append(rel)
+            continue
 
         current = path.read_text(encoding="utf-8")
         count = current.count(search)

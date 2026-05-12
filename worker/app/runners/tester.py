@@ -16,7 +16,10 @@ from app.runners.base import (
     extract_diff,
     extract_search_replace_blocks,
     relevant_files_for_prompt,
+    render_contract_section,
     render_file_contents,
+    task_contract,
+    task_target_files,
 )
 
 
@@ -49,18 +52,28 @@ class TesterRunner(BaseRunner):
         ]
         # Existing test files are the most useful context for a tester.
         test_files = [f for f in all_files if "test" in f.lower()]
-        prompt_files = relevant_files_for_prompt(self.ctx.prompt, all_files, max_files=20)
-        selected = list(dict.fromkeys(prompt_files + test_files))
+        planned = task_target_files(self.ctx.payload, all_files)
+        if planned:
+            selected = list(dict.fromkeys(planned + test_files))
+        else:
+            prompt_files = relevant_files_for_prompt(
+                self.ctx.prompt, all_files, max_files=20
+            )
+            selected = list(dict.fromkeys(prompt_files + test_files))
         self._file_section = render_file_contents(self._ws, selected)
         self._tests_summary = "\n".join(test_files) or "(no existing tests found)"
+        self._contract_section = render_contract_section(task_contract(self.ctx.payload))
         await self.ctx.emit_log(
-            "system", f"branch={branch}, existing test files: {len(test_files)}",
+            "system",
+            f"branch={branch}, existing test files: {len(test_files)}, "
+            f"target_files={'from plan' if planned else 'heuristic'}",
         )
 
     def user_prompt(self) -> str:
         return (
-            f"## Existing test files (truncated)\n{self._tests_summary}\n\n"
-            f"## Current contents of likely target files\n"
+            f"{self._contract_section}"
+            f"## Existing test files\n{self._tests_summary}\n\n"
+            f"## Current contents of target files\n"
             f"{self._file_section or '(nothing matched by name)'}\n\n"
             f"## Task\n{self.ctx.prompt}\n"
         )

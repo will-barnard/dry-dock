@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 from app.git_workspace import GitWorkspace
-from app.runners.base import BaseRunner, RunnerResult
+from app.runners.base import (
+    BaseRunner,
+    RunnerResult,
+    render_contract_section,
+    task_contract,
+)
 
 
 _REVIEWER_INSTRUCTIONS = """\
@@ -11,6 +16,12 @@ You are reviewing a code change. Output a markdown report with these sections:
   ## Issues  (one bullet per issue, severity tag in brackets: [blocker], [major], [minor], [nit])
   ## Suggestions
   ## Approval recommendation  (approve | request_changes | comment)
+
+If a plan contract is provided, check the diff against it specifically:
+  - Are the endpoints in the contract present and shaped correctly?
+  - Do env vars match the contract names and meanings?
+  - Are the ports / service URLs consistent?
+Drift from the contract is a [blocker]-severity issue.
 
 Be concise. Skip sections you have nothing for. No flattery.
 """
@@ -29,9 +40,14 @@ class ReviewerRunner(BaseRunner):
         self._diff = (self.ctx.payload or {}).get("diff", "")
         if not self._diff:
             await self.ctx.emit_log("stderr", "reviewer: no diff in payload")
+        self._contract_section = render_contract_section(task_contract(self.ctx.payload))
 
     def user_prompt(self) -> str:
-        return f"## Diff to review\n\n```diff\n{self._diff}\n```\n\n## Reviewer brief\n{self.ctx.prompt}"
+        return (
+            f"{self._contract_section}"
+            f"## Diff to review\n\n```diff\n{self._diff}\n```\n\n"
+            f"## Reviewer brief\n{self.ctx.prompt}"
+        )
 
     async def finalize(self, response_text: str) -> RunnerResult:
         await self.ctx.emit_artifact("review", "review.md", response_text, {})

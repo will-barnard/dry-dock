@@ -11,9 +11,12 @@ from app.runners.base import (
     extract_diff,
     extract_search_replace_blocks,
     relevant_files_for_prompt,
+    render_contract_section,
     render_file_contents,
     request_format_retry,
     request_sr_retry,
+    task_contract,
+    task_target_files,
 )
 
 
@@ -84,15 +87,23 @@ class DocsRunner(BaseRunner):
             f for f in all_files
             if f.lower().endswith((".md", ".rst", ".adoc")) or f.lower().startswith("docs/")
         ]
-        prompt_files = relevant_files_for_prompt(self.ctx.prompt, all_files, max_files=20)
-        selected = list(dict.fromkeys(prompt_files + docs))
+        planned = task_target_files(self.ctx.payload, all_files)
+        if planned:
+            selected = list(dict.fromkeys(planned + docs))
+        else:
+            prompt_files = relevant_files_for_prompt(
+                self.ctx.prompt, all_files, max_files=20
+            )
+            selected = list(dict.fromkeys(prompt_files + docs))
         self._file_section = render_file_contents(ws, selected)
         self._docs_summary = "\n".join(docs) or "(no doc files found)"
+        self._contract_section = render_contract_section(task_contract(self.ctx.payload))
 
     def user_prompt(self) -> str:
         return (
-            f"## Existing docs (truncated)\n{self._docs_summary}\n\n"
-            f"## Current contents of likely target files\n"
+            f"{self._contract_section}"
+            f"## Existing docs\n{self._docs_summary}\n\n"
+            f"## Current contents of target files\n"
             f"{self._file_section or '(nothing matched by name)'}\n\n"
             f"## Task\n{self.ctx.prompt}\n"
         )

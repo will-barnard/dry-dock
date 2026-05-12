@@ -42,6 +42,22 @@
   </form>
 </section>
 
+<section class="mt-4 bg-white border border-slate-200 rounded p-4">
+  <h2 class="text-base font-semibold">Validate commands</h2>
+  <p class="text-xs text-slate-500 mt-1">
+    Shell commands the validator pool runs after each code/refactor/test/docs task,
+    inside the worker's clone of the task's branch. One per line. Run in order;
+    any non-zero exit fails the validator and auto-requeues the parent task with
+    the failure log appended to its prompt (up to <span class="font-mono">max_attempts</span>).
+    Leave blank to disable automated validation for this project.
+  </p>
+  <form method="post" action="/projects/{{ project.id }}/validate-commands" class="mt-3 space-y-2">
+    <textarea name="validate_commands" rows="5" placeholder="npm run build&#10;npm run lint&#10;npx tsc --noEmit"
+              class="w-full font-mono text-xs border border-slate-300 rounded px-2 py-1.5">{{ validate_commands_text }}</textarea>
+    <button class="bg-slate-900 text-white text-xs font-medium px-3 py-1.5 rounded">Save commands</button>
+  </form>
+</section>
+
 {% if pending_approvals %}
 <section class="mt-6 bg-amber-50 border border-amber-200 rounded p-4">
   <h2 class="font-semibold text-amber-900">Awaiting your approval ({{ pending_approvals|length }})</h2>

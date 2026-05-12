@@ -38,6 +38,12 @@ _INLINE_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE runs    ADD COLUMN IF NOT EXISTS worker_name VARCHAR(255)",
     "ALTER TABLE runs    ADD COLUMN IF NOT EXISTS model_used  VARCHAR(128)",
     "ALTER TABLE projects ADD COLUMN IF NOT EXISTS direct_push BOOLEAN NOT NULL DEFAULT FALSE",
+    # Validator pool. PG 10+ supports ADD VALUE IF NOT EXISTS on an enum type
+    # outside a transaction. SQLAlchemy already runs DDL outside transactions
+    # via run_sync; if a future Postgres rejects this in-tx, split into a
+    # standalone connection (autocommit) before the create_all step.
+    "ALTER TYPE  task_kind ADD VALUE IF NOT EXISTS 'validate'",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS validate_commands JSON DEFAULT '[]'::json",
 )
 
 

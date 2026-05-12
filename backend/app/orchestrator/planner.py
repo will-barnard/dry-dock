@@ -26,7 +26,24 @@ log = structlog.get_logger()
 
 
 async def materialize_plan(session: AsyncSession, plan_task: Task) -> list[Task]:
-    """Expand a plan artifact into child tasks. Caller commits."""
+    """Expand a plan artifact into child tasks. Caller commits.
+
+    Plan artifact format accepted:
+
+      New (preferred):
+        {
+          "contract": "markdown invariants for this plan",
+          "tasks": [ {kind, title, prompt, target_files?, depends_on?, ...} ]
+        }
+
+      Legacy (still parsed for backward compat):
+        [ {kind, title, prompt, depends_on?, ...} ]
+
+    The contract (when present) is copied verbatim into every child's
+    ``payload.contract`` so downstream runners can prepend it to their
+    prompts without having to fish it out of the planner's artifacts. The
+    same goes for ``target_files``.
+    """
     stmt = (
         select(Artifact)
         .where(Artifact.task_id == plan_task.id, Artifact.kind == "summary")
@@ -39,9 +56,22 @@ async def materialize_plan(session: AsyncSession, plan_task: Task) -> list[Task]
         return []
 
     try:
-        entries: list[dict[str, Any]] = json.loads(art.content)
+        parsed = json.loads(art.content)
     except json.JSONDecodeError:
         log.warning("planner.plan_not_json", task=str(plan_task.id))
+        return []
+
+    if isinstance(parsed, list):
+        entries: list[dict[str, Any]] = parsed
+        contract = ""
+    elif isinstance(parsed, dict):
+        entries = parsed.get("tasks") or []
+        contract = (parsed.get("contract") or "").strip()
+        if not isinstance(entries, list):
+            log.warning("planner.plan_tasks_not_list", task=str(plan_task.id))
+            return []
+    else:
+        log.warning("planner.plan_unexpected_shape", task=str(plan_task.id))
         return []
 
     # Map local index → real task id so we can wire up parent links by index.
@@ -62,6 +92,15 @@ async def materialize_plan(session: AsyncSession, plan_task: Task) -> list[Task]
         if has_dep:
             parent_id = id_by_index[depends_on]
 
+        # Build the payload: start from any caller-provided payload, then
+        # layer in target_files and contract from the plan envelope.
+        payload: dict[str, Any] = dict(entry.get("payload") or {})
+        target_files = entry.get("target_files")
+        if isinstance(target_files, list) and target_files:
+            payload["target_files"] = [str(f) for f in target_files if isinstance(f, str)]
+        if contract:
+            payload["contract"] = contract
+
         new_task = Task(
             id=uuid.uuid4(),
             project_id=plan_task.project_id,
@@ -73,7 +112,7 @@ async def materialize_plan(session: AsyncSession, plan_task: Task) -> list[Task]
             min_ram_gb=int(entry.get("min_ram_gb", 0)),
             min_context=int(entry.get("min_context", 0)),
             preferred_model=entry.get("preferred_model"),
-            payload=entry.get("payload") or {},
+            payload=payload,
             # Tasks that depend on another plan step start PENDING and are
             # promoted to QUEUED only after their parent task succeeds.
             status=TaskStatus.PENDING if has_dep else TaskStatus.QUEUED,
@@ -83,5 +122,8 @@ async def materialize_plan(session: AsyncSession, plan_task: Task) -> list[Task]
         id_by_index[idx] = new_task.id
         created.append(new_task)
 
-    log.info("planner.materialized", plan_task=str(plan_task.id), count=len(created))
+    log.info(
+        "planner.materialized",
+        plan_task=str(plan_task.id), count=len(created), contract_chars=len(contract),
+    )
     return created

@@ -28,6 +28,7 @@ from app.models import (
     Project,
     Run,
     Task,
+    TaskKind,
     TaskStatus,
     Worker,
     WorkerStatus,
@@ -245,6 +246,38 @@ async def _handle_result(
                 task.status = (
                     TaskStatus.FAILED if task.attempt >= task.max_attempts else TaskStatus.QUEUED
                 )
+                # Validator-driven auto-requeue: a failed validator means the
+                # work its parent produced is broken. Append the failure log
+                # to the parent's prompt and re-queue the parent, then reset
+                # this validator to PENDING so the chain promotes it again
+                # when the parent re-succeeds. Capped by parent.max_attempts.
+                if (
+                    task.kind == TaskKind.VALIDATE
+                    and task.parent_task_id is not None
+                ):
+                    parent = await session.get(Task, task.parent_task_id)
+                    if (
+                        parent is not None
+                        and parent.kind in (TaskKind.CODE, TaskKind.REFACTOR, TaskKind.TEST, TaskKind.DOCS)
+                        and parent.attempt < parent.max_attempts
+                    ):
+                        failure_block = (
+                            "\n\n## Previous attempt failed validation\n"
+                            "The validator that ran after your last attempt reported:\n\n"
+                            f"```\n{msg.summary}\n```\n\n"
+                            "Fix the issues above. The contract has not changed."
+                        )
+                        parent.prompt = (parent.prompt or "") + failure_block
+                        parent.attempt += 1
+                        parent.status = TaskStatus.QUEUED
+                        parent.result = None
+                        # Re-arm this validator so it runs again post-fix.
+                        task.status = TaskStatus.PENDING
+                        log.info(
+                            "validator.auto_requeued_parent",
+                            validator=str(task.id), parent=str(parent.id),
+                            parent_attempt=parent.attempt,
+                        )
 
     live.current_task_id = None
     await bus.publish(

@@ -133,8 +133,27 @@ async def project_detail(
             "tasks": tasks,
             "pending_approvals": pending_approvals,
             "task_kinds": [k.value for k in TaskKind],
+            "validate_commands_text": "\n".join(project.validate_commands or []),
         },
     )
+
+
+@router.post("/projects/{project_id}/validate-commands", response_class=HTMLResponse)
+async def update_validate_commands(
+    request: Request,
+    project_id: uuid.UUID,
+    validate_commands: str = Form(""),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    project = await session.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "project not found")
+    # One command per line, blanks dropped, leading/trailing whitespace trimmed.
+    commands = [line.strip() for line in (validate_commands or "").splitlines() if line.strip()]
+    project.validate_commands = commands
+    await session.commit()
+    return RedirectResponse(f"/projects/{project_id}", status_code=303)
 
 
 @router.post("/projects/{project_id}/settings", response_class=HTMLResponse)

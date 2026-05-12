@@ -7,6 +7,7 @@ from app.runners.refactorer import RefactorerRunner
 from app.runners.researcher import ResearcherRunner
 from app.runners.reviewer import ReviewerRunner
 from app.runners.tester import TesterRunner
+from app.runners.validator import ValidatorRunner
 
 RUNNERS: dict[str, type[BaseRunner]] = {
     "planner": PlannerRunner,
@@ -16,6 +17,7 @@ RUNNERS: dict[str, type[BaseRunner]] = {
     "refactorer": RefactorerRunner,
     "docs": DocsRunner,
     "researcher": ResearcherRunner,
+    "validator": ValidatorRunner,
 }
 
 __all__ = ["RUNNERS", "BaseRunner", "RunnerContext", "RunnerResult"]

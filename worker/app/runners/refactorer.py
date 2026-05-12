@@ -11,7 +11,10 @@ from app.runners.base import (
     extract_diff,
     extract_search_replace_blocks,
     relevant_files_for_prompt,
+    render_contract_section,
     render_file_contents,
+    task_contract,
+    task_target_files,
 )
 
 
@@ -42,14 +45,22 @@ class RefactorerRunner(BaseRunner):
             f for f in ws.list_files()
             if not f.startswith((".git/", "node_modules/", ".venv/", "dist/", "build/"))
         ]
-        self._target_files = relevant_files_for_prompt(self.ctx.prompt, all_files, max_files=20)
+        planned = task_target_files(self.ctx.payload, all_files)
+        if planned:
+            self._target_files = planned
+        else:
+            self._target_files = relevant_files_for_prompt(
+                self.ctx.prompt, all_files, max_files=20
+            )
         self._file_section = render_file_contents(ws, self._target_files)
         self._tree = "\n".join(all_files)
+        self._contract_section = render_contract_section(task_contract(self.ctx.payload))
 
     def user_prompt(self) -> str:
         return (
-            f"## Repo file tree (truncated)\n{self._tree}\n\n"
-            f"## Current contents of likely target files\n"
+            f"{self._contract_section}"
+            f"## Repo file tree\n{self._tree}\n\n"
+            f"## Current contents of target files\n"
             f"{self._file_section or '(no target files matched by name)'}\n\n"
             f"## Task\n{self.ctx.prompt}\n"
         )

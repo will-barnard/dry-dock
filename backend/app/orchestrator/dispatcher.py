@@ -90,6 +90,7 @@ async def _dispatch_one_for_pool(pool: str) -> bool:
                     "github_repo": project.github_repo,
                     "default_branch": project.default_branch,
                     "system_prompt": project.system_prompt,
+                    "validate_commands": list(project.validate_commands or []),
                 },
                 payload=task.payload or {},
             )

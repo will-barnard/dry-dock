@@ -30,8 +30,11 @@ from app.runners.base import (
     extract_diff,
     extract_search_replace_blocks,
     relevant_files_for_prompt,
+    render_contract_section,
     render_file_contents,
     request_sr_retry,
+    task_contract,
+    task_target_files,
 )
 
 log = structlog.get_logger()
@@ -65,28 +68,38 @@ class CoderRunner(BaseRunner):
             if not f.startswith((".git/", "node_modules/", ".venv/", "dist/", "build/"))
         ]
 
-        # Pick a handful of files the model most likely needs to see, then load
-        # their contents into the prompt. Without this the model is editing
-        # blind and produces SEARCH blocks that don't match anything.
-        self._target_files = relevant_files_for_prompt(self.ctx.prompt, all_files, max_files=20)
+        # Planner-supplied target_files take precedence over the heuristic.
+        # If the planner gave us a list and at least one path exists, use
+        # exactly those — no guessing, no speculative file loading.
+        planned = task_target_files(self.ctx.payload, all_files)
+        if planned:
+            self._target_files = planned
+            file_source = "plan"
+        else:
+            self._target_files = relevant_files_for_prompt(
+                self.ctx.prompt, all_files, max_files=20
+            )
+            file_source = "heuristic"
         self._file_section = render_file_contents(ws, self._target_files)
 
         # Cap the tree dump independently — it gives the model awareness of
         # files it may want to reference even if it didn't see their content.
         self._tree = "\n".join(all_files)
+        self._contract_section = render_contract_section(task_contract(self.ctx.payload))
 
         await self.ctx.emit_log(
             "system",
             f"cloned repo on branch={branch}, {len(all_files)} files, "
-            f"loaded {len(self._target_files)} into prompt",
+            f"loaded {len(self._target_files)} into prompt (source={file_source})",
         )
 
     def user_prompt(self) -> str:
         return (
             f"Repository: {self.ctx.project['github_owner']}/{self.ctx.project['github_repo']}\n"
             f"Branch: {self.ctx.branch_name or self.ctx.project.get('default_branch', 'main')}\n\n"
-            f"## Repo file tree (truncated)\n{self._tree}\n\n"
-            f"## Current contents of the most likely target files\n"
+            f"{self._contract_section}"
+            f"## Repo file tree\n{self._tree}\n\n"
+            f"## Current contents of the target files\n"
             f"Use these to write SEARCH blocks that match the file EXACTLY. "
             f"If you need to edit a file not shown here, mention its path in "
             f"your plan and I'll include it next round.\n\n"

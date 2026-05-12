@@ -32,6 +32,7 @@ class TaskKind(str, enum.Enum):
     REFACTOR = "refactor"
     DOCS = "docs"
     RESEARCH = "research"
+    VALIDATE = "validate"
 
 
 class TaskStatus(str, enum.Enum):
@@ -109,6 +110,9 @@ class Project(Base):
     auto_approve_merges: Mapped[bool] = mapped_column(Boolean, default=False)
     direct_push: Mapped[bool] = mapped_column(Boolean, default=False)
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Shell commands run by the validator pool after each code/refactor task.
+    # JSON list of strings; empty list means "no automated validation."
+    validate_commands: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     tasks: Mapped[list["Task"]] = relationship(back_populates="project", cascade="all, delete-orphan")

@@ -11,6 +11,7 @@ KIND_TO_POOL: dict[TaskKind, str] = {
     TaskKind.REFACTOR: "refactorer",
     TaskKind.DOCS: "docs",
     TaskKind.RESEARCH: "researcher",
+    TaskKind.VALIDATE: "validator",
 }
 
 KNOWN_POOLS: tuple[str, ...] = (
@@ -21,6 +22,7 @@ KNOWN_POOLS: tuple[str, ...] = (
     "refactorer",
     "docs",
     "researcher",
+    "validator",
 )
 
 

@@ -504,6 +504,51 @@ async def with_workspace(project: dict[str, Any]):
     )
 
 
+def task_contract(payload: dict[str, Any] | None) -> str:
+    """Pull the contract (markdown) the planner attached to this task, if any.
+
+    Empty string when absent — callers can just concatenate without a None check.
+    """
+    if not payload:
+        return ""
+    raw = payload.get("contract")
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip()
+
+
+def task_target_files(payload: dict[str, Any] | None, all_files: list[str]) -> list[str]:
+    """Pull the planner-supplied target_files list, filtered to the ones that
+    actually exist in the working copy. Returns [] when absent or all invalid
+    so callers can fall back to the relevance heuristic."""
+    if not payload:
+        return []
+    raw = payload.get("target_files")
+    if not isinstance(raw, list):
+        return []
+    available = set(all_files)
+    out: list[str] = []
+    for f in raw:
+        if isinstance(f, str) and f in available:
+            out.append(f)
+    return out
+
+
+def render_contract_section(contract: str) -> str:
+    """Wrap the contract in a labelled section that's hard for the model to
+    skim past. Empty string when there's nothing to render."""
+    if not contract:
+        return ""
+    return (
+        "## Plan contract — the shared invariants you MUST respect\n"
+        "You are one of several agents implementing one plan. The fields below "
+        "were agreed on before any code was written. Do not invent new "
+        "endpoints, env vars, ports, or schemas — if the task requires "
+        "deviating, surface that in your prose and stop short of the change.\n\n"
+        f"{contract}\n"
+    )
+
+
 async def request_format_retry(
     runner: "BaseRunner",
     original_user_prompt: str,

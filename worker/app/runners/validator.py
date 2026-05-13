@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -123,6 +124,29 @@ class ValidatorRunner(BaseRunner):
 
     # ── helpers ────────────────────────────────────────────────────
 
+    def _resolve_cwd(self, cmd: str) -> Path:
+        """Return the best working directory for this command.
+
+        For npm/yarn/pnpm/npx commands: if there's no package.json at the
+        repo root, scan immediate subdirectories for one and use the first
+        found (alphabetically, preferring 'frontend', 'client', 'web').
+        All other commands always run from the repo root.
+        """
+        assert self._ws.path is not None
+        root = self._ws.path
+        _NPM_PREFIXES = ("npm ", "npm\t", "yarn ", "yarn\t", "pnpm ", "pnpm\t", "npx ")
+        if not any(cmd.lstrip().startswith(p) for p in _NPM_PREFIXES):
+            return root
+        if (root / "package.json").exists():
+            return root
+        # Prefer well-known names, then fall back alphabetically.
+        _PREFERRED = ("frontend", "client", "web", "app", "ui")
+        subdirs = sorted(
+            (d for d in root.iterdir() if d.is_dir() and (d / "package.json").exists()),
+            key=lambda d: (_PREFERRED.index(d.name) if d.name in _PREFERRED else len(_PREFERRED), d.name),
+        )
+        return subdirs[0] if subdirs else root
+
     def _commands(self) -> list[str]:
         raw = self.ctx.project.get("validate_commands") or []
         if not isinstance(raw, list):
@@ -138,12 +162,18 @@ class ValidatorRunner(BaseRunner):
             "GIT_TERMINAL_PROMPT": "0",
             "CI": "1",  # many tools use this to disable interactive output
         }
+        cwd = self._resolve_cwd(cmd)
+        if cwd != self._ws.path:
+            await self.ctx.emit_log(
+                "system",
+                f"  note: no package.json at repo root; running from {cwd.relative_to(self._ws.path)}",
+            )
         try:
             proc = await asyncio.create_subprocess_shell(
                 cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=str(self._ws.path),
+                cwd=str(cwd),
                 env=env,
             )
             try:

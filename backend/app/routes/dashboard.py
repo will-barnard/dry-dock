@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
@@ -46,12 +46,99 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+# ── Modules ────────────────────────────────────────────────────────
+#
+# dry-dock is becoming a multi-module platform: the same orchestrator + worker
+# fleet powers several distinct tools. Each module is a top-level area of the
+# app with its own route. The homepage is now a module picker.
+#
+#   engineer  — the original product: autonomous multi-agent software builds
+#   operator  — a chat surface that talks to the worker fleet directly
+#   workbench — a resume + cover-letter authoring tool
+#
+# `status`: "active" modules are fully built; "preview" modules have a route
+# and a stub page but no real functionality yet.
+
+MODULES: list[dict] = [
+    {
+        "id": "engineer",
+        "name": "Engineer",
+        "href": "/engineer",
+        "status": "active",
+        "tagline": "Autonomous multi-agent software builds",
+        "description": (
+            "Point it at a GitHub repo, describe a goal, and a planner fans the "
+            "work out across coder / reviewer / tester / refactorer / docs / "
+            "validator pools. Approval gates, contracts, and a live task DAG."
+        ),
+        "accent": "sky",
+    },
+    {
+        "id": "operator",
+        "name": "Operator",
+        "href": "/operator",
+        "status": "preview",
+        "tagline": "Chat directly with the worker fleet",
+        "description": (
+            "A conversational surface over the same Ollama-backed workers — ask "
+            "questions, run one-off research or summarization jobs, no project "
+            "or repo required."
+        ),
+        "accent": "violet",
+    },
+    {
+        "id": "workbench",
+        "name": "Workbench",
+        "href": "/workbench",
+        "status": "preview",
+        "tagline": "Resume & cover-letter authoring",
+        "description": (
+            "Draft, tailor, and iterate on resumes and cover letters against a "
+            "specific job posting, with the worker fleet doing the heavy "
+            "drafting and revision passes."
+        ),
+        "accent": "amber",
+    },
+]
+
+
+def _module(module_id: str) -> dict | None:
+    return next((m for m in MODULES if m["id"] == module_id), None)
+
+
 @router.get("/", response_class=HTMLResponse)
-async def index(
+async def home(
     request: Request,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> HTMLResponse:
+    """Module picker — the new front door."""
+    # A light status line per module. Only Engineer has real counts today.
+    project_count = (await session.execute(
+        select(func.count()).select_from(Project)
+    )).scalar_one()
+    live_count = len(await registry.all())
+    return templates.TemplateResponse(
+        request,
+        "home.html",
+        {
+            "user": user,
+            "modules": MODULES,
+            "engineer_stats": {
+                "projects": project_count,
+                "workers_online": live_count,
+            },
+        },
+    )
+
+
+@router.get("/engineer", response_class=HTMLResponse)
+async def engineer(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> HTMLResponse:
+    """The Engineer module — what used to be the homepage."""
     projects = list((await session.execute(
         select(Project).order_by(Project.created_at.desc())
     )).scalars().all())
@@ -59,8 +146,28 @@ async def index(
     workers = list((await session.execute(select(Worker).order_by(Worker.name))).scalars().all())
     return templates.TemplateResponse(
         request,
-        "index.html",
+        "engineer.html",
         {"user": user, "projects": projects, "workers": workers, "live_count": len(live)},
+    )
+
+
+@router.get("/operator", response_class=HTMLResponse)
+async def operator(
+    request: Request, user: User = Depends(get_current_user)
+) -> HTMLResponse:
+    """Operator module — chat surface over the worker fleet. Stub for now."""
+    return templates.TemplateResponse(
+        request, "operator.html", {"user": user, "module": _module("operator")},
+    )
+
+
+@router.get("/workbench", response_class=HTMLResponse)
+async def workbench(
+    request: Request, user: User = Depends(get_current_user)
+) -> HTMLResponse:
+    """Workbench module — resume & cover-letter tool. Stub for now."""
+    return templates.TemplateResponse(
+        request, "workbench.html", {"user": user, "module": _module("workbench")},
     )
 
 

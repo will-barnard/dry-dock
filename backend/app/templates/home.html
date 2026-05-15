@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}dry-dock — modules{% endblock %}
+{% block content %}
+<header class="mb-6">
+  <h1 class="text-2xl font-semibold">Modules</h1>
+  <p class="text-sm text-slate-500 mt-1">
+    One orchestrator, one worker fleet, several tools. Pick a module to get started.
+  </p>
+</header>
+
+<section class="grid grid-cols-1 md:grid-cols-3 gap-5">
+  {% for m in modules %}
+    {% set accent = m.accent %}
+    <a href="{{ m.href }}"
+       class="group block bg-white border border-slate-200 rounded-lg p-5 hover:border-{{ accent }}-400 hover:shadow-sm transition">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold">{{ m.name }}</h2>
+        {% if m.status == 'active' %}
+          <span class="text-[10px] font-medium px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">active</span>
+        {% else %}
+          <span class="text-[10px] font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-500">preview</span>
+        {% endif %}
+      </div>
+      <div class="text-sm font-medium text-{{ accent }}-700 mt-0.5">{{ m.tagline }}</div>
+      <p class="text-sm text-slate-600 mt-2 leading-relaxed">{{ m.description }}</p>
+
+      {% if m.id == 'engineer' %}
+        <div class="mt-4 flex items-center gap-4 text-xs text-slate-500">
+          <span><span class="font-mono text-slate-800">{{ engineer_stats.projects }}</span> projects</span>
+          <span><span class="font-mono text-slate-800">{{ engineer_stats.workers_online }}</span> workers online</span>
+        </div>
+      {% else %}
+        <div class="mt-4 text-xs text-slate-400 italic">
+          Route is live; functionality is being built out.
+        </div>
+      {% endif %}
+    </a>
+  {% endfor %}
+</section>
+{% endblock %}

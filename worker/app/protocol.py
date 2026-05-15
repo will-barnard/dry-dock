@@ -100,3 +100,37 @@ class WelcomeMsg(BaseModel):
     type: Literal["welcome"]
     worker_id: uuid.UUID
     server_version: str
+
+
+# ── Operator chat messages (mirror of backend/app/orchestrator/protocol.py) ──
+
+
+class ChatRequestMsg(BaseModel):
+    type: Literal["chat_request"]
+    conversation_id: uuid.UUID
+    assistant_message_id: uuid.UUID
+    model: str | None
+    messages: list[dict[str, str]]
+
+
+class ChatChunkMsg(BaseModel):
+    type: Literal["chat_chunk"] = "chat_chunk"
+    conversation_id: uuid.UUID
+    assistant_message_id: uuid.UUID
+    delta: str
+
+
+class ChatDoneMsg(BaseModel):
+    type: Literal["chat_done"] = "chat_done"
+    conversation_id: uuid.UUID
+    assistant_message_id: uuid.UUID
+    content: str
+    tokens_in: int = 0
+    tokens_out: int = 0
+
+
+class ChatErrorMsg(BaseModel):
+    type: Literal["chat_error"] = "chat_error"
+    conversation_id: uuid.UUID
+    assistant_message_id: uuid.UUID
+    error: str

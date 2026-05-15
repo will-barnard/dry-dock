@@ -57,6 +57,10 @@ class EventBus:
         return f"project:{project_id}"
 
     @staticmethod
+    def conversation_topic(conversation_id: uuid.UUID) -> str:
+        return f"conversation:{conversation_id}"
+
+    @staticmethod
     def global_topic() -> str:
         return "global"
 

@@ -129,6 +129,54 @@ class PingMsg(BaseModel):
     type: Literal["ping"] = "ping"
 
 
+# ────────────────────────── Operator chat messages ──────────────────────────
+#
+# Chat is a separate lifecycle from tasks: no run row, no git, no retries.
+# The orchestrator picks a live worker directly and sends a chat_request;
+# the worker streams chat_chunk deltas and finishes with chat_done (or
+# chat_error). These ride the same WebSocket as task messages.
+
+
+class ChatRequestMsg(BaseModel):
+    """orchestrator → worker: answer one conversation turn."""
+
+    type: Literal["chat_request"] = "chat_request"
+    conversation_id: uuid.UUID
+    assistant_message_id: uuid.UUID  # the pre-created empty assistant row to fill
+    model: str | None  # None → worker uses its DEFAULT_MODEL
+    # Full message history to feed the model: [{role, content}, ...].
+    messages: list[dict[str, str]]
+
+
+class ChatChunkMsg(BaseModel):
+    """worker → orchestrator: one streamed delta of the assistant reply."""
+
+    type: Literal["chat_chunk"] = "chat_chunk"
+    conversation_id: uuid.UUID
+    assistant_message_id: uuid.UUID
+    delta: str
+
+
+class ChatDoneMsg(BaseModel):
+    """worker → orchestrator: the assistant turn is complete."""
+
+    type: Literal["chat_done"] = "chat_done"
+    conversation_id: uuid.UUID
+    assistant_message_id: uuid.UUID
+    content: str  # full final text (authoritative — the orchestrator persists this)
+    tokens_in: int = 0
+    tokens_out: int = 0
+
+
+class ChatErrorMsg(BaseModel):
+    """worker → orchestrator: the assistant turn failed."""
+
+    type: Literal["chat_error"] = "chat_error"
+    conversation_id: uuid.UUID
+    assistant_message_id: uuid.UUID
+    error: str
+
+
 # Discriminated union for parsing inbound messages.
 WorkerInbound = (
     RegisterMsg
@@ -139,4 +187,7 @@ WorkerInbound = (
     | ArtifactMsg
     | ResultMsg
     | ErrorMsg
+    | ChatChunkMsg
+    | ChatDoneMsg
+    | ChatErrorMsg
 )

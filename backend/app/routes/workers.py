@@ -38,8 +38,16 @@ from app.orchestrator.event_bus import bus
 from app.orchestrator.git_service import apply_patch_and_push, open_pull_request
 from app.orchestrator.lifecycle import promote_ready_children
 from app.orchestrator.planner import materialize_plan
+from app.orchestrator.chat import (
+    on_chunk as chat_on_chunk,
+    on_done as chat_on_done,
+    on_error as chat_on_error,
+)
 from app.orchestrator.protocol import (
     ArtifactMsg,
+    ChatChunkMsg,
+    ChatDoneMsg,
+    ChatErrorMsg,
     ClaimRequestMsg,
     ErrorMsg,
     HeartbeatMsg,
@@ -74,6 +82,9 @@ _INBOUND_BY_TYPE = {
     "artifact": ArtifactMsg,
     "result": ResultMsg,
     "error": ErrorMsg,
+    "chat_chunk": ChatChunkMsg,
+    "chat_done": ChatDoneMsg,
+    "chat_error": ChatErrorMsg,
 }
 
 
@@ -388,6 +399,12 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
                 log.warning("worker.error_msg", code=msg.code, message=msg.message)
                 if msg.task_id and msg.run_id:
                     await _persist_event(msg.run_id, "error", "system", msg.message)
+            elif isinstance(msg, ChatChunkMsg):
+                await chat_on_chunk(msg.conversation_id, msg.assistant_message_id, msg.delta)
+            elif isinstance(msg, ChatDoneMsg):
+                await chat_on_done(msg.conversation_id, msg.assistant_message_id, msg.content)
+            elif isinstance(msg, ChatErrorMsg):
+                await chat_on_error(msg.conversation_id, msg.assistant_message_id, msg.error)
 
     except WebSocketDisconnect:
         log.info("worker.disconnected", name=reg.name)

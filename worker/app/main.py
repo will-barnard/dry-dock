@@ -26,6 +26,10 @@ from app.config import get_settings
 from app.ollama_client import get_provider
 from app.protocol import (
     ArtifactMsg,
+    ChatChunkMsg,
+    ChatDoneMsg,
+    ChatErrorMsg,
+    ChatRequestMsg,
     ClaimGrantMsg,
     ClaimRequestMsg,
     HeartbeatMsg,
@@ -186,6 +190,50 @@ class Worker:
         self.current_task = None
         await self.send(ClaimRequestMsg().model_dump(mode="json"))
 
+    async def run_chat(self, req: ChatRequestMsg) -> None:
+        """Answer one Operator conversation turn by streaming Ollama output.
+
+        Unlike run_job there's no clone, no runner class, no result row — we
+        stream chat_chunk deltas and finish with chat_done (or chat_error).
+        Runs concurrently with the consume loop, same as run_job.
+        """
+        provider = get_provider()
+        model = req.model or self.settings.default_model
+        log.info("worker.chat_started", conversation=str(req.conversation_id), model=model)
+        chunks: list[str] = []
+        tokens_in = 0
+        tokens_out = 0
+        try:
+            async for ev in provider.chat_stream(model, req.messages):
+                piece = (ev.get("message") or {}).get("content") or ""
+                if piece:
+                    chunks.append(piece)
+                    await self.send(ChatChunkMsg(
+                        conversation_id=req.conversation_id,
+                        assistant_message_id=req.assistant_message_id,
+                        delta=piece,
+                    ).model_dump(mode="json"))
+                if ev.get("done"):
+                    tokens_in = ev.get("prompt_eval_count", 0) or 0
+                    tokens_out = ev.get("eval_count", 0) or 0
+        except Exception as exc:
+            log.exception("worker.chat_failed")
+            await self.send(ChatErrorMsg(
+                conversation_id=req.conversation_id,
+                assistant_message_id=req.assistant_message_id,
+                error=str(exc),
+            ).model_dump(mode="json"))
+            return
+
+        await self.send(ChatDoneMsg(
+            conversation_id=req.conversation_id,
+            assistant_message_id=req.assistant_message_id,
+            content="".join(chunks),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+        ).model_dump(mode="json"))
+        log.info("worker.chat_done", conversation=str(req.conversation_id))
+
     async def consume_messages(self) -> None:
         assert self.ws is not None
         async for raw in self.ws:
@@ -198,6 +246,9 @@ class Worker:
                 # Don't await — run the job concurrently with the consume loop
                 # so heartbeats / future cancels can still flow.
                 asyncio.create_task(self.run_job(grant))
+            elif t == "chat_request":
+                req = ChatRequestMsg.model_validate(data)
+                asyncio.create_task(self.run_chat(req))
             elif t == "cancel":
                 log.info("worker.cancel_received", task=data.get("task_id"))
                 # MVP: we don't currently abort an in-flight runner. Log and continue.

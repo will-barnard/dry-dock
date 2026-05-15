@@ -236,6 +236,56 @@ class Artifact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class MessageRole(str, enum.Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+
+
+class Conversation(Base):
+    """An Operator-module chat thread. Independent of projects/tasks — chat is
+    its own lifecycle that only borrows the worker fleet for inference."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    title: Mapped[str] = mapped_column(String(255), default="New conversation")
+    # Which worker pool answers this thread's turns, and an optional model
+    # override. Defaults are applied at creation time by the route.
+    pool: Mapped[str] = mapped_column(String(64), default="researcher")
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    messages: Mapped[list["ConversationMessage"]] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan"
+    )
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[MessageRole] = mapped_column(Enum(MessageRole, name="message_role"))
+    content: Mapped[str] = mapped_column(Text, default="")
+    # Assistant messages start `complete=False` (the worker is streaming); they
+    # flip to True on chat_done. `error` is set if the turn failed.
+    complete: Mapped[bool] = mapped_column(Boolean, default=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    worker_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    conversation: Mapped[Conversation] = relationship(back_populates="messages")
+
+    __table_args__ = (Index("ix_messages_conversation_created", "conversation_id", "created_at"),)
+
+
 class ApprovalGate(Base):
     __tablename__ = "approval_gates"
 

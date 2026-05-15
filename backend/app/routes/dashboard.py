@@ -151,14 +151,8 @@ async def engineer(
     )
 
 
-@router.get("/operator", response_class=HTMLResponse)
-async def operator(
-    request: Request, user: User = Depends(get_current_user)
-) -> HTMLResponse:
-    """Operator module — chat surface over the worker fleet. Stub for now."""
-    return templates.TemplateResponse(
-        request, "operator.html", {"user": user, "module": _module("operator")},
-    )
+# NOTE: /operator and its sub-routes now live in routes/operator.py — the
+# Operator module is built out, no longer a stub.
 
 
 @router.get("/workbench", response_class=HTMLResponse)

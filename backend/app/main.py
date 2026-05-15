@@ -17,6 +17,7 @@ from app.orchestrator.dispatcher import dispatcher
 from app.routes import (
     auth,
     dashboard,
+    operator as operator_routes,
     projects,
     remote_machines as remote_machines_routes,
     settings as settings_routes,
@@ -152,3 +153,4 @@ app.include_router(remote_machines_routes.api_router, dependencies=_auth)
 app.include_router(dashboard.router, dependencies=_auth)
 app.include_router(settings_routes.router, dependencies=_auth)
 app.include_router(remote_machines_routes.router, dependencies=_auth)
+app.include_router(operator_routes.router, dependencies=_auth)

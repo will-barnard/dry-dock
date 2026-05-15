@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}{{ conversation.title }} — Operator{% endblock %}
+{% block content %}
+<nav class="text-sm text-slate-500 mb-4">
+  <a href="/" class="hover:underline">Modules</a> /
+  <a href="/operator" class="hover:underline">Operator</a> /
+  {{ conversation.title }}
+</nav>
+
+<header class="flex items-baseline justify-between mb-4">
+  <div>
+    <h1 class="text-xl font-semibold">{{ conversation.title }}</h1>
+    <div class="text-xs text-slate-500 font-mono mt-0.5">
+      pool: {{ conversation.pool }}{% if conversation.model %} · {{ conversation.model }}{% endif %}
+    </div>
+  </div>
+  <form method="post" action="/operator/conversations/{{ conversation.id }}/delete" class="m-0"
+        onsubmit="return confirm('Delete this conversation?');">
+    <button class="text-xs px-2 py-1 rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200">Delete</button>
+  </form>
+</header>
+
+<div id="messages" class="space-y-3 mb-4">
+  {% for m in messages %}
+    {% if m.role.value == 'user' %}
+      <div class="flex justify-end">
+        <div class="bg-slate-900 text-slate-50 rounded-lg px-3 py-2 max-w-2xl">
+          <pre class="log text-sm">{{ m.content }}</pre>
+        </div>
+      </div>
+    {% else %}
+      <div class="flex justify-start">
+        <div class="bg-white border border-slate-200 rounded-lg px-3 py-2 max-w-2xl w-full">
+          <div class="text-[10px] uppercase tracking-wide text-slate-400 mb-1">
+            assistant{% if m.worker_name %} · {{ m.worker_name }}{% endif %}
+          </div>
+          <pre id="msg-{{ m.id }}" class="log text-sm">{{ m.content }}</pre>
+          {% if not m.complete %}
+            <span id="think-{{ m.id }}" class="text-xs text-slate-400 italic animate-pulse">thinking…</span>
+          {% endif %}
+          {% if m.error %}
+            <div id="err-{{ m.id }}" class="text-xs text-rose-600 mt-1">⚠ {{ m.error }}</div>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="text-slate-500 italic text-sm">No messages yet. Say something below.</div>
+  {% endfor %}
+</div>
+
+<form method="post" action="/operator/conversations/{{ conversation.id }}/messages"
+      class="bg-white border border-slate-200 rounded p-3 flex gap-2 items-end sticky bottom-4">
+  <textarea name="content" required rows="2" placeholder="Message the {{ conversation.pool }} pool…"
+            class="flex-1 border border-slate-300 rounded px-2 py-1.5 text-sm resize-y"
+            onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){this.form.submit();}"></textarea>
+  <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded shrink-0">Send</button>
+</form>
+<p class="text-xs text-slate-400 mt-1">⌘/Ctrl + Enter to send.</p>
+
+<script>
+  // Stream assistant turns. Each `chunk` event carries the full running text
+  // (not a delta), so we just replace the target's content — no append
+  // bookkeeping, and a late-connecting EventSource catches up on first chunk.
+  (function () {
+    const es = new EventSource("/stream/operator/{{ conversation.id }}");
+
+    function box(id) { return document.getElementById("msg-" + id); }
+    function think(id) { return document.getElementById("think-" + id); }
+
+    es.addEventListener("chunk", function (e) {
+      const d = JSON.parse(e.data);
+      const el = box(d.assistant_message_id);
+      if (el) el.textContent = d.content;
+    });
+
+    es.addEventListener("done", function (e) {
+      const d = JSON.parse(e.data);
+      const el = box(d.assistant_message_id);
+      if (el) el.textContent = d.content;
+      const t = think(d.assistant_message_id);
+      if (t) t.remove();
+    });
+
+    es.addEventListener("turn_error", function (e) {
+      const d = JSON.parse(e.data);
+      const t = think(d.assistant_message_id);
+      if (t) {
+        t.textContent = "⚠ " + d.error;
+        t.classList.remove("animate-pulse", "text-slate-400", "italic");
+        t.classList.add("text-rose-600");
+      }
+    });
+
+    // EventSource also fires a built-in `error` event on connection drop —
+    // with no `data`. The browser auto-reconnects; nothing to do here.
+  })();
+
+  // Keep the view pinned to the latest message.
+  window.scrollTo(0, document.body.scrollHeight);
+</script>
+{% endblock %}

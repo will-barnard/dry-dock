@@ -5,24 +5,58 @@
 
 <header class="mb-6">
   <h1 class="text-2xl font-semibold">Operator</h1>
-  <p class="text-sm text-slate-500 mt-1">{{ module.tagline }}</p>
+  <p class="text-sm text-slate-500 mt-1">Chat directly with the worker fleet — no project or repo required.</p>
 </header>
 
-<section class="bg-white border border-slate-200 rounded-lg p-6 max-w-2xl">
-  <div class="flex items-center gap-2">
-    <span class="text-[10px] font-medium px-2 py-0.5 rounded bg-slate-100 text-slate-500">preview</span>
-    <span class="text-sm text-slate-500">Route is live — functionality not built yet.</span>
+<section class="grid grid-cols-1 md:grid-cols-3 gap-6">
+  <div class="md:col-span-2 space-y-3">
+    <h2 class="text-lg font-semibold">Conversations</h2>
+    {% for c in conversations %}
+      <div class="bg-white border border-slate-200 rounded p-4 hover:border-slate-400 flex items-baseline justify-between">
+        <a href="/operator/conversations/{{ c.id }}" class="block flex-1">
+          <div class="font-medium">{{ c.title }}</div>
+          <div class="text-xs text-slate-500 font-mono mt-0.5">
+            pool: {{ c.pool }}{% if c.model %} · {{ c.model }}{% endif %}
+          </div>
+        </a>
+        <form method="post" action="/operator/conversations/{{ c.id }}/delete" class="m-0"
+              onsubmit="return confirm('Delete this conversation?');">
+          <button class="text-xs text-rose-600 hover:text-rose-800">delete</button>
+        </form>
+      </div>
+    {% else %}
+      <div class="text-slate-500 italic">No conversations yet. Start one on the right.</div>
+    {% endfor %}
   </div>
-  <p class="text-sm text-slate-600 mt-3 leading-relaxed">{{ module.description }}</p>
 
-  <div class="mt-5 border-t border-slate-100 pt-4">
-    <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">Planned</h2>
-    <ul class="mt-2 text-sm text-slate-600 space-y-1.5 list-disc ml-5">
-      <li>A persistent chat thread that routes turns to an idle worker in a chosen pool.</li>
-      <li>Streamed responses over the same SSE channel the task log uses.</li>
-      <li>One-off research / summarization without creating a project.</li>
-      <li>Conversation history persisted so threads survive a reload.</li>
-    </ul>
-  </div>
+  <aside>
+    <form method="post" action="/operator/conversations" class="bg-white border border-slate-200 rounded p-4 space-y-3">
+      <h2 class="text-lg font-semibold">New conversation</h2>
+      <label class="text-sm block">title <span class="text-slate-400">(optional)</span>
+        <input name="title" placeholder="auto-set from first message"
+               class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm">
+      </label>
+      <label class="text-sm block">pool
+        <select name="pool" class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm font-mono">
+          {% for p in pools %}
+            <option value="{{ p }}" {% if p == 'researcher' %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
+        </select>
+        <span class="text-xs text-slate-500 mt-1 block">
+          Which worker pool answers this thread. <span class="font-mono">researcher</span> is the
+          natural default — pure text, no git clone.
+        </span>
+      </label>
+      <label class="text-sm block">model override <span class="text-slate-400">(optional)</span>
+        <input name="model" placeholder="leave blank for worker default"
+               class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm font-mono">
+      </label>
+      <label class="text-sm block">system prompt <span class="text-slate-400">(optional)</span>
+        <textarea name="system_prompt" rows="3"
+                  class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm"></textarea>
+      </label>
+      <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded">Start</button>
+    </form>
+  </aside>
 </section>
 {% endblock %}

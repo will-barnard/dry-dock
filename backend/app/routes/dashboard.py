@@ -77,7 +77,7 @@ MODULES: list[dict] = [
         "id": "operator",
         "name": "Operator",
         "href": "/operator",
-        "status": "preview",
+        "status": "active",
         "tagline": "Chat directly with the worker fleet",
         "description": (
             "A conversational surface over the same Ollama-backed workers — ask "

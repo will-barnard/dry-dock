@@ -49,14 +49,13 @@
   {% endfor %}
 </div>
 
-<form method="post" action="/operator/conversations/{{ conversation.id }}/messages"
+<form id="chat-form" method="post" action="/operator/conversations/{{ conversation.id }}/messages"
       class="bg-white border border-slate-200 rounded p-3 flex gap-2 items-end sticky bottom-4">
-  <textarea name="content" required rows="2" placeholder="Message the {{ conversation.pool }} pool…"
-            class="flex-1 border border-slate-300 rounded px-2 py-1.5 text-sm resize-y"
-            onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){this.form.submit();}"></textarea>
+  <textarea id="chat-input" name="content" required rows="1" placeholder="Message the {{ conversation.pool }} pool…"
+            class="flex-1 border border-slate-300 rounded px-2 py-1.5 text-sm resize-none overflow-hidden"></textarea>
   <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded shrink-0">Send</button>
 </form>
-<p class="text-xs text-slate-400 mt-1">⌘/Ctrl + Enter to send.</p>
+<p class="text-xs text-slate-400 mt-1">Enter to send · Shift+Enter for new line.</p>
 
 <script>
   // Stream assistant turns. Each `chunk` event carries the full running text
@@ -98,5 +97,21 @@
 
   // Keep the view pinned to the latest message.
   window.scrollTo(0, document.body.scrollHeight);
+
+  // Auto-grow textarea and submit on Enter (Shift+Enter = newline).
+  const chatInput = document.getElementById("chat-input");
+  const chatForm = document.getElementById("chat-form");
+
+  chatInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      chatForm.submit();
+    }
+  });
+
+  chatInput.addEventListener("input", function () {
+    this.style.height = "auto";
+    this.style.height = this.scrollHeight + "px";
+  });
 </script>
 {% endblock %}

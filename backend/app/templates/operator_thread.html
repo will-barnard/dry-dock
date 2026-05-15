@@ -70,13 +70,13 @@
     es.addEventListener("chunk", function (e) {
       const d = JSON.parse(e.data);
       const el = box(d.assistant_message_id);
-      if (el) el.textContent = d.content;
+      if (el) { el.textContent = d.content; window.scrollTo(0, document.body.scrollHeight); }
     });
 
     es.addEventListener("done", function (e) {
       const d = JSON.parse(e.data);
       const el = box(d.assistant_message_id);
-      if (el) el.textContent = d.content;
+      if (el) { el.textContent = d.content; window.scrollTo(0, document.body.scrollHeight); }
       const t = think(d.assistant_message_id);
       if (t) t.remove();
     });

@@ -303,3 +303,155 @@ class ApprovalGate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     task: Mapped[Task] = relationship(back_populates="approvals")
+
+
+# ── Workbench module: the CV library ───────────────────────────────
+#
+# A structured, granular store of CV content. Entries (jobs / projects /
+# education) are containers; bullets are the reusable, independently
+# selectable line items within them; skills are independent items grouped
+# by category. The tailoring workflow (W2) reads the whole library and picks
+# the best-fit items for a given job description.
+
+
+class CVEntryKind(str, enum.Enum):
+    EXPERIENCE = "experience"
+    PROJECT = "project"
+    EDUCATION = "education"
+
+
+class CVProfile(Base):
+    """Header / contact block. Single-row table in practice, but keyed by id
+    so we don't have to special-case 'the one row'."""
+
+    __tablename__ = "cv_profile"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    full_name: Mapped[str] = mapped_column(String(255), default="")
+    headline: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # {linkedin, github, website, ...} — free-form so new link types don't
+    # need a migration.
+    links: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CVSummary(Base):
+    """A summary-paragraph variant. You might keep a few — 'default',
+    'leadership-focused', 'data-focused' — and the tailoring step picks one
+    (or generates a fresh one seeded from these)."""
+
+    __tablename__ = "cv_summaries"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    label: Mapped[str] = mapped_column(String(128), default="default")
+    text: Mapped[str] = mapped_column(Text, default="")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CVEntry(Base):
+    """A job, project, or education entry — a container for bullets."""
+
+    __tablename__ = "cv_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    kind: Mapped[CVEntryKind] = mapped_column(Enum(CVEntryKind, name="cv_entry_kind"), index=True)
+    organization: Mapped[str] = mapped_column(String(255))  # company / project / school
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)  # job title / degree
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    url: Mapped[str | None] = mapped_column(String(512), nullable=True)  # for projects
+    # Dates are display strings, not date types — resumes use "Oct '25",
+    # "Present", bare years. Flexible strings are the right call here.
+    start_date: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    end_date: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The italic line under education entries ("Graduated with Distinction…").
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    bullets: Mapped[list["CVBullet"]] = relationship(
+        back_populates="entry", cascade="all, delete-orphan",
+        order_by="CVBullet.sort_order",
+    )
+
+
+class CVBullet(Base):
+    """A reusable line item under an entry — the unit the tailoring step
+    selects from."""
+
+    __tablename__ = "cv_bullets"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    entry_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("cv_entries.id", ondelete="CASCADE"), index=True
+    )
+    text: Mapped[str] = mapped_column(Text)
+    # Skills / themes for matching against a job description — "python",
+    # "ci-cd", "leadership". Gives the model handles, not just prose.
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    entry: Mapped[CVEntry] = relationship(back_populates="bullets")
+
+
+class CVSkill(Base):
+    """One skill, grouped by category for display."""
+
+    __tablename__ = "cv_skills"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    category: Mapped[str] = mapped_column(String(128))  # "Web Development", ...
+    name: Mapped[str] = mapped_column(String(128))  # "Spring Boot", ...
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WorkbenchJobKind(str, enum.Enum):
+    IMPORT = "import"     # parse a resume → incrementally merge into the library
+    TAILOR = "tailor"     # (W2) select library items for a job description
+    IMPROVE = "improve"   # (W3) rewrite a single bullet
+
+
+class WorkbenchJobStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    ERROR = "error"
+
+
+class WorkbenchJob(Base):
+    """A unit of agent work for the Workbench module — kept separate from the
+    Engineer-module Task table because it has no git/DAG/approval lifecycle.
+    A job is dispatched to a worker, runs one non-streaming inference, and the
+    orchestrator applies the structured result (e.g. merging imported CV items).
+    """
+
+    __tablename__ = "workbench_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    kind: Mapped[WorkbenchJobKind] = mapped_column(
+        Enum(WorkbenchJobKind, name="workbench_job_kind")
+    )
+    status: Mapped[WorkbenchJobStatus] = mapped_column(
+        Enum(WorkbenchJobStatus, name="workbench_job_status"),
+        default=WorkbenchJobStatus.PENDING,
+    )
+    # Job inputs (for import: {"resume_text": "..."}) and the structured
+    # outcome (for import: {"counts": {...}, "applied": {...}, "raw": {...}}).
+    input: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    worker_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

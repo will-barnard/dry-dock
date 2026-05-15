@@ -56,7 +56,9 @@ from app.orchestrator.protocol import (
     RegisterMsg,
     ResultMsg,
     WelcomeMsg,
+    WorkbenchResultMsg,
 )
+from app.orchestrator.workbench_jobs import handle_import_result
 from app.orchestrator.registry import LiveWorker, registry
 from app.schemas import WorkerOut
 
@@ -85,6 +87,7 @@ _INBOUND_BY_TYPE = {
     "chat_chunk": ChatChunkMsg,
     "chat_done": ChatDoneMsg,
     "chat_error": ChatErrorMsg,
+    "workbench_result": WorkbenchResultMsg,
 }
 
 
@@ -405,6 +408,14 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
                 await chat_on_done(msg.conversation_id, msg.assistant_message_id, msg.content)
             elif isinstance(msg, ChatErrorMsg):
                 await chat_on_error(msg.conversation_id, msg.assistant_message_id, msg.error)
+            elif isinstance(msg, WorkbenchResultMsg):
+                # One handler per Workbench job kind; only `import` is wired today.
+                if msg.kind == "import":
+                    await handle_import_result(
+                        msg.job_id, msg.success, msg.content, msg.error
+                    )
+                else:
+                    log.warning("worker.unknown_workbench_kind", kind=msg.kind)
 
     except WebSocketDisconnect:
         log.info("worker.disconnected", name=reg.name)

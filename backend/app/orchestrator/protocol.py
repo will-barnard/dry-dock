@@ -177,6 +177,36 @@ class ChatErrorMsg(BaseModel):
     error: str
 
 
+# ────────────────────────── Workbench job messages ──────────────────────────
+#
+# Workbench jobs (resume import, tailoring, bullet improvement) are one-shot,
+# non-streaming inferences. The orchestrator sends a workbench_request; the
+# worker runs a single `provider.chat` and returns a workbench_result. No
+# chunks — the whole response comes back at once, which is fine because the
+# orchestrator needs the complete (usually JSON) output to act on it anyway.
+
+
+class WorkbenchRequestMsg(BaseModel):
+    """orchestrator → worker: run one Workbench inference job."""
+
+    type: Literal["workbench_request"] = "workbench_request"
+    job_id: uuid.UUID
+    kind: str  # import | tailor | improve
+    model: str | None  # None → worker uses its DEFAULT_MODEL
+    messages: list[dict[str, str]]
+
+
+class WorkbenchResultMsg(BaseModel):
+    """worker → orchestrator: a Workbench job finished (or failed)."""
+
+    type: Literal["workbench_result"] = "workbench_result"
+    job_id: uuid.UUID
+    kind: str
+    success: bool
+    content: str = ""
+    error: str | None = None
+
+
 # Discriminated union for parsing inbound messages.
 WorkerInbound = (
     RegisterMsg
@@ -190,4 +220,5 @@ WorkerInbound = (
     | ChatChunkMsg
     | ChatDoneMsg
     | ChatErrorMsg
+    | WorkbenchResultMsg
 )

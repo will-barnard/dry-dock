@@ -134,3 +134,23 @@ class ChatErrorMsg(BaseModel):
     conversation_id: uuid.UUID
     assistant_message_id: uuid.UUID
     error: str
+
+
+# ── Workbench job messages (mirror of backend protocol) ──
+
+
+class WorkbenchRequestMsg(BaseModel):
+    type: Literal["workbench_request"]
+    job_id: uuid.UUID
+    kind: str
+    model: str | None
+    messages: list[dict[str, str]]
+
+
+class WorkbenchResultMsg(BaseModel):
+    type: Literal["workbench_result"] = "workbench_result"
+    job_id: uuid.UUID
+    kind: str
+    success: bool
+    content: str = ""
+    error: str | None = None

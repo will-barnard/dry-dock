@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Resume import — Workbench{% endblock %}
+{% block head %}
+  {# Auto-refresh while the job is still running — the import is async and
+     polled, no SSE. ~25s is the typical end-to-end time. #}
+  {% if job.status.value in ('pending', 'running') %}
+    <meta http-equiv="refresh" content="3">
+  {% endif %}
+{% endblock %}
+{% block content %}
+<nav class="text-sm text-slate-500 mb-4">
+  <a href="/" class="hover:underline">Modules</a> /
+  <a href="/workbench" class="hover:underline">Workbench</a> /
+  Import
+</nav>
+
+<header class="mb-4">
+  <h1 class="text-xl font-semibold">Resume import</h1>
+  <div class="text-xs text-slate-500 font-mono mt-0.5">
+    {{ job.created_at.strftime('%Y-%m-%d %H:%M') }}
+    {% if job.worker_name %} · worker: {{ job.worker_name }}{% endif %}
+  </div>
+</header>
+
+<section class="bg-white border border-slate-200 rounded p-5 max-w-2xl">
+  {% if job.status.value in ('pending', 'running') %}
+    <div class="flex items-center gap-2">
+      <span class="text-sm text-amber-700 font-medium animate-pulse">
+        {{ 'Dispatching…' if job.status.value == 'pending' else 'Worker is parsing & merging…' }}
+      </span>
+    </div>
+    <p class="text-xs text-slate-500 mt-2">
+      This page refreshes itself every few seconds. A resume import usually
+      finishes in well under a minute.
+    </p>
+
+  {% elif job.status.value == 'error' %}
+    <div class="text-sm text-rose-700 font-medium">Import failed</div>
+    <pre class="log text-xs bg-rose-50 border border-rose-200 rounded p-2 mt-2">{{ job.error }}</pre>
+    <a href="/workbench" class="inline-block mt-3 text-sm text-slate-600 hover:underline">← back to library</a>
+
+  {% else %}
+    {# done #}
+    {% set c = job.result.counts if job.result and job.result.counts else None %}
+    <div class="text-sm text-emerald-700 font-medium">Import complete</div>
+    {% if c %}
+      <ul class="mt-3 text-sm text-slate-700 space-y-1">
+        <li><span class="font-mono text-slate-900">{{ c.entries_added }}</span> new entries added</li>
+        <li><span class="font-mono text-slate-900">{{ c.bullets_added }}</span> new bullets added
+          {% if c.entries_matched %}
+            <span class="text-slate-500">({{ c.entries_matched }} existing entr{{ 'y' if c.entries_matched == 1 else 'ies' }} matched &amp; extended)</span>
+          {% endif %}
+        </li>
+        <li><span class="font-mono text-slate-900">{{ c.skills_added }}</span> new skills added</li>
+        <li><span class="font-mono text-slate-900">{{ c.summaries_added }}</span> new summaries added</li>
+        {% if c.profile_updated %}
+          <li class="text-slate-600">Profile fields filled in from the resume</li>
+        {% endif %}
+      </ul>
+      <p class="text-xs text-slate-500 mt-3">
+        Everything the agent considered a duplicate was skipped. Review the
+        result in your library and edit or delete anything that's off.
+      </p>
+    {% else %}
+      <p class="text-sm text-slate-500 mt-2">The job finished but reported no item counts.</p>
+    {% endif %}
+    <a href="/workbench" class="inline-block mt-4 bg-slate-900 text-white text-sm px-4 py-2 rounded">
+      Review the library
+    </a>
+  {% endif %}
+</section>
+{% endblock %}

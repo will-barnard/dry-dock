@@ -23,6 +23,7 @@ from app.routes import (
     settings as settings_routes,
     streams,
     tasks,
+    workbench as workbench_routes,
     workers,
 )
 
@@ -154,3 +155,4 @@ app.include_router(dashboard.router, dependencies=_auth)
 app.include_router(settings_routes.router, dependencies=_auth)
 app.include_router(remote_machines_routes.router, dependencies=_auth)
 app.include_router(operator_routes.router, dependencies=_auth)
+app.include_router(workbench_routes.router, dependencies=_auth)

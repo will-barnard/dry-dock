@@ -37,6 +37,8 @@ from app.protocol import (
     LogChunkMsg,
     RegisterMsg,
     ResultMsg,
+    WorkbenchRequestMsg,
+    WorkbenchResultMsg,
 )
 from app.runners import RUNNERS, RunnerContext
 
@@ -234,6 +236,27 @@ class Worker:
         ).model_dump(mode="json"))
         log.info("worker.chat_done", conversation=str(req.conversation_id))
 
+    async def run_workbench_job(self, req: WorkbenchRequestMsg) -> None:
+        """Run one non-streaming Workbench inference (resume import, tailoring,
+        bullet improvement). Unlike chat, there's no streaming — the
+        orchestrator needs the whole (usually JSON) response to act on it, so
+        we just call `provider.chat` once and return the full content."""
+        provider = get_provider()
+        model = req.model or self.settings.default_model
+        log.info("worker.workbench_started", job=str(req.job_id), kind=req.kind, model=model)
+        try:
+            result = await provider.chat(model, req.messages)
+            content = (result.get("message") or {}).get("content") or ""
+            await self.send(WorkbenchResultMsg(
+                job_id=req.job_id, kind=req.kind, success=True, content=content,
+            ).model_dump(mode="json"))
+            log.info("worker.workbench_done", job=str(req.job_id), kind=req.kind)
+        except Exception as exc:
+            log.exception("worker.workbench_failed")
+            await self.send(WorkbenchResultMsg(
+                job_id=req.job_id, kind=req.kind, success=False, content="", error=str(exc),
+            ).model_dump(mode="json"))
+
     async def consume_messages(self) -> None:
         assert self.ws is not None
         async for raw in self.ws:
@@ -249,6 +272,9 @@ class Worker:
             elif t == "chat_request":
                 req = ChatRequestMsg.model_validate(data)
                 asyncio.create_task(self.run_chat(req))
+            elif t == "workbench_request":
+                wreq = WorkbenchRequestMsg.model_validate(data)
+                asyncio.create_task(self.run_workbench_job(wreq))
             elif t == "cancel":
                 log.info("worker.cancel_received", task=data.get("task_id"))
                 # MVP: we don't currently abort an in-flight runner. Log and continue.

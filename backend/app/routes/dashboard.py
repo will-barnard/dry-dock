@@ -78,7 +78,7 @@ MODULES: list[dict] = [
         "name": "Operator",
         "href": "/operator",
         "status": "active",
-        "tagline": "Chat directly with the worker fleet",
+        "tagline": "Chat directly with an agent",
         "description": (
             "A conversational surface over the same Ollama-backed workers — ask "
             "questions, run one-off research or summarization jobs, no project "
@@ -151,18 +151,8 @@ async def engineer(
     )
 
 
-# NOTE: /operator and its sub-routes now live in routes/operator.py — the
-# Operator module is built out, no longer a stub.
-
-
-@router.get("/workbench", response_class=HTMLResponse)
-async def workbench(
-    request: Request, user: User = Depends(get_current_user)
-) -> HTMLResponse:
-    """Workbench module — resume & cover-letter tool. Stub for now."""
-    return templates.TemplateResponse(
-        request, "workbench.html", {"user": user, "module": _module("workbench")},
-    )
+# NOTE: /operator lives in routes/operator.py and /workbench lives in
+# routes/workbench.py — both modules are built out, no longer stubs.
 
 
 @router.post("/projects", response_class=HTMLResponse)

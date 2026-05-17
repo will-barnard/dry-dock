@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}{{ application.role_title or 'Application' }} — Workbench{% endblock %}
+{% block head %}
+  {# Auto-refresh while a tailor job is in flight. ~30s typical. #}
+  {% if latest_job and latest_job.status.value in ('pending', 'running') %}
+    <meta http-equiv="refresh" content="4">
+  {% endif %}
+{% endblock %}
+{% block content %}
+<nav class="text-sm text-slate-500 mb-4">
+  <a href="/" class="hover:underline">Modules</a> /
+  <a href="/workbench" class="hover:underline">Workbench</a> /
+  Application
+</nav>
+
+<header class="flex items-baseline justify-between mb-4">
+  <div>
+    <h1 class="text-xl font-semibold">
+      {{ application.role_title or 'role TBD' }}
+      {% if application.company %}<span class="text-slate-500"> @ {{ application.company }}</span>{% endif %}
+    </h1>
+    <div class="text-xs text-slate-500 font-mono mt-0.5">
+      {{ application.created_at.strftime('%Y-%m-%d %H:%M') }}
+    </div>
+  </div>
+  <form method="post" action="/workbench/applications/{{ application.id }}/delete" class="m-0"
+        onsubmit="return confirm('Delete this application and all its tailored versions?');">
+    <button class="text-xs px-2 py-1 rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200">Delete</button>
+  </form>
+</header>
+
+<section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+  {# ── left: JD + generate + rendered resume ── #}
+  <div class="lg:col-span-2 space-y-4">
+
+    {# job description #}
+    <details class="bg-white border border-slate-200 rounded p-4" {% if not versions %}open{% endif %}>
+      <summary class="cursor-pointer text-sm font-semibold">Job description</summary>
+      <pre class="log text-xs font-mono mt-2 whitespace-pre-wrap">{{ application.job_description }}</pre>
+    </details>
+
+    {# generate / status #}
+    <div class="bg-white border border-slate-200 rounded p-4">
+      <div class="flex items-baseline justify-between">
+        <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">Generate</h2>
+        {% if latest_job %}
+          <span class="text-[10px] px-2 py-0.5 rounded
+            {% if latest_job.status.value == 'done' %}bg-emerald-100 text-emerald-700
+            {% elif latest_job.status.value == 'error' %}bg-rose-100 text-rose-700
+            {% else %}bg-amber-100 text-amber-700{% endif %}">
+            last: {{ latest_job.status.value }}
+          </span>
+        {% endif %}
+      </div>
+
+      {% if latest_job and latest_job.status.value in ('pending', 'running') %}
+        <div class="mt-2 text-sm text-amber-700 font-medium animate-pulse">
+          {{ 'Dispatching…' if latest_job.status.value == 'pending' else 'Worker is tailoring…' }}
+        </div>
+        <p class="text-xs text-slate-500 mt-1">This page refreshes itself every few seconds.</p>
+      {% else %}
+        <form method="post" action="/workbench/applications/{{ application.id }}/tailor" class="mt-3">
+          <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded">
+            {% if versions %}Regenerate ({{ versions[0].version + 1 }}){% else %}Generate tailored resume{% endif %}
+          </button>
+          <span class="text-xs text-slate-500 ml-2">
+            Picks best-fit items from your CV library &amp; assembles Markdown.
+          </span>
+        </form>
+        {% if latest_job and latest_job.status.value == 'error' %}
+          <div class="mt-3 text-xs text-rose-700">
+            <div class="font-medium">Last generation failed:</div>
+            <pre class="log text-xs bg-rose-50 border border-rose-200 rounded p-2 mt-1">{{ latest_job.error }}</pre>
+          </div>
+        {% endif %}
+      {% endif %}
+    </div>
+
+    {# rendered latest version #}
+    {% if versions %}
+      {% set latest_version = versions[0] %}
+      <div class="bg-white border border-slate-200 rounded p-4">
+        <div class="flex items-baseline justify-between">
+          <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">
+            Version {{ latest_version.version }} (latest)
+          </h2>
+          <span class="text-xs text-slate-500 font-mono">
+            {{ latest_version.created_at.strftime('%Y-%m-%d %H:%M') }}
+          </span>
+        </div>
+        {% if latest_version.rationale %}
+          <p class="text-sm text-slate-600 italic mt-2">{{ latest_version.rationale }}</p>
+        {% endif %}
+        <pre class="log text-sm font-mono whitespace-pre-wrap mt-3 p-3 bg-slate-50 border border-slate-100 rounded">{{ latest_version.rendered }}</pre>
+        <button onclick="navigator.clipboard.writeText(document.getElementById('md-{{ latest_version.id }}').textContent)"
+                class="hidden">copy</button>
+        <textarea id="md-{{ latest_version.id }}" class="hidden">{{ latest_version.rendered }}</textarea>
+        <div class="mt-2 flex gap-2 text-xs">
+          <button onclick="navigator.clipboard.writeText(document.getElementById('md-{{ latest_version.id }}').value); this.textContent='Copied ✓'; setTimeout(()=>this.textContent='Copy Markdown', 1200);"
+                  class="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700">
+            Copy Markdown
+          </button>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  {# ── right: version history ── #}
+  <aside class="space-y-2">
+    <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">Versions</h2>
+    {% if versions %}
+      <ul class="space-y-1 text-sm">
+        {% for v in versions %}
+          <li class="bg-white border border-slate-200 rounded p-2">
+            <details>
+              <summary class="cursor-pointer">
+                <span class="font-mono">v{{ v.version }}</span>
+                <span class="text-xs text-slate-500 ml-1">{{ v.created_at.strftime('%m-%d %H:%M') }}</span>
+              </summary>
+              {% if v.rationale %}
+                <p class="text-xs text-slate-600 italic mt-2">{{ v.rationale }}</p>
+              {% endif %}
+              <pre class="log text-xs font-mono whitespace-pre-wrap mt-2 p-2 bg-slate-50 border border-slate-100 rounded max-h-96 overflow-auto">{{ v.rendered }}</pre>
+            </details>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="text-xs text-slate-400 italic">No versions yet.</div>
+    {% endif %}
+  </aside>
+</section>
+{% endblock %}

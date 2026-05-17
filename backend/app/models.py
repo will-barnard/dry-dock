@@ -455,3 +455,43 @@ class WorkbenchJob(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class ResumeApplication(Base):
+    """A job you're applying to — the job description plus the tailored resume
+    versions generated against it."""
+
+    __tablename__ = "resume_applications"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    company: Mapped[str] = mapped_column(String(255), default="")
+    role_title: Mapped[str] = mapped_column(String(255), default="")
+    job_description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    versions: Mapped[list["TailoredResume"]] = relationship(
+        back_populates="application", cascade="all, delete-orphan",
+        order_by="TailoredResume.version",
+    )
+
+
+class TailoredResume(Base):
+    """One generated, tailored resume for an application. Each generate run
+    produces a new version. `selection` is the model's structured pick
+    (validated against the library); `rendered` is the Markdown the
+    orchestrator assembled from it — deterministic, so formatting is
+    consistent across versions."""
+
+    __tablename__ = "tailored_resumes"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("resume_applications.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    selection: Mapped[dict] = mapped_column(JSON, default=dict)  # the model's raw pick
+    rendered: Mapped[str] = mapped_column(Text, default="")       # assembled Markdown
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    application: Mapped[ResumeApplication] = relationship(back_populates="versions")

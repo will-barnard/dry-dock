@@ -58,7 +58,11 @@ from app.orchestrator.protocol import (
     WelcomeMsg,
     WorkbenchResultMsg,
 )
-from app.orchestrator.workbench_jobs import handle_import_result
+from app.orchestrator.workbench_jobs import (
+    handle_import_result,
+    handle_improve_result,
+    handle_tailor_result,
+)
 from app.orchestrator.registry import LiveWorker, registry
 from app.schemas import WorkerOut
 
@@ -409,9 +413,17 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
             elif isinstance(msg, ChatErrorMsg):
                 await chat_on_error(msg.conversation_id, msg.assistant_message_id, msg.error)
             elif isinstance(msg, WorkbenchResultMsg):
-                # One handler per Workbench job kind; only `import` is wired today.
+                # One handler per Workbench job kind.
                 if msg.kind == "import":
                     await handle_import_result(
+                        msg.job_id, msg.success, msg.content, msg.error
+                    )
+                elif msg.kind == "tailor":
+                    await handle_tailor_result(
+                        msg.job_id, msg.success, msg.content, msg.error
+                    )
+                elif msg.kind == "improve":
+                    await handle_improve_result(
                         msg.job_id, msg.success, msg.content, msg.error
                     )
                 else:

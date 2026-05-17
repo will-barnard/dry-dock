@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Improve bullet — Workbench{% endblock %}
+{% block head %}
+  {% if job.status.value in ('pending', 'running') %}
+    <meta http-equiv="refresh" content="3">
+  {% endif %}
+{% endblock %}
+{% block content %}
+<nav class="text-sm text-slate-500 mb-4">
+  <a href="/" class="hover:underline">Modules</a> /
+  <a href="/workbench" class="hover:underline">Workbench</a> /
+  Improve bullet
+</nav>
+
+<header class="mb-4">
+  <h1 class="text-xl font-semibold">Improve bullet</h1>
+  {% if entry %}
+    <div class="text-xs text-slate-500 font-mono mt-0.5">
+      under: {{ entry.organization }}{% if entry.title %} — {{ entry.title }}{% endif %}
+    </div>
+  {% endif %}
+</header>
+
+<section class="bg-white border border-slate-200 rounded p-5 max-w-2xl space-y-4">
+  {% if bullet %}
+    <div>
+      <div class="text-xs font-semibold tracking-wide uppercase text-slate-500">Original</div>
+      <p class="text-sm text-slate-700 mt-1">{{ bullet.text }}</p>
+    </div>
+  {% else %}
+    <div class="text-sm text-rose-700">The bullet no longer exists.</div>
+  {% endif %}
+
+  {% if job.status.value in ('pending', 'running') %}
+    <div class="text-sm text-amber-700 font-medium animate-pulse">
+      {{ 'Dispatching…' if job.status.value == 'pending' else 'Worker is rewriting the bullet…' }}
+    </div>
+    <p class="text-xs text-slate-500">This page refreshes itself every few seconds.</p>
+
+  {% elif job.status.value == 'error' %}
+    <div>
+      <div class="text-sm text-rose-700 font-medium">The improvement run failed</div>
+      <pre class="log text-xs bg-rose-50 border border-rose-200 rounded p-2 mt-2">{{ job.error }}</pre>
+    </div>
+    <a href="/workbench" class="inline-block text-sm text-slate-600 hover:underline">← back to library</a>
+
+  {% elif job.result and job.result.applied %}
+    {# Already applied — show what landed and a link back. #}
+    <div>
+      <div class="text-xs font-semibold tracking-wide uppercase text-emerald-700">Applied</div>
+      <p class="text-sm text-slate-700 mt-1">{{ job.result.applied }}</p>
+    </div>
+    <a href="/workbench" class="inline-block bg-slate-900 text-white text-sm px-4 py-2 rounded">Back to library</a>
+
+  {% elif job.result and job.result.dismissed %}
+    <div class="text-sm text-slate-600">The proposal was dismissed.</div>
+    <a href="/workbench" class="inline-block text-sm text-slate-600 hover:underline">← back to library</a>
+
+  {% else %}
+    {# Done — show the proposed text, let the user edit, accept, or dismiss. #}
+    {% set proposed = job.result.proposed if job.result else '' %}
+    <div>
+      <div class="text-xs font-semibold tracking-wide uppercase text-emerald-700">Proposed (you can edit)</div>
+      <form method="post" action="/workbench/improvements/{{ job.id }}/apply" class="mt-1 space-y-2">
+        <textarea name="text" rows="3" required
+                  class="w-full border border-slate-300 rounded px-2 py-1.5 text-sm">{{ proposed }}</textarea>
+        <div class="flex items-center gap-2">
+          <button class="bg-emerald-600 text-white text-sm px-4 py-2 rounded">Apply to bullet</button>
+          <button formaction="/workbench/improvements/{{ job.id }}/dismiss" formmethod="post"
+                  class="text-sm px-3 py-2 rounded border border-slate-300 text-slate-700 hover:bg-slate-50">
+            Dismiss
+          </button>
+          <span class="text-xs text-slate-500 ml-2">Truthfulness is enforced by the prompt, but skim before you apply.</span>
+        </div>
+      </form>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

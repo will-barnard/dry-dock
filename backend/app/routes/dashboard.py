@@ -90,7 +90,7 @@ MODULES: list[dict] = [
         "id": "workbench",
         "name": "Workbench",
         "href": "/workbench",
-        "status": "preview",
+        "status": "active",
         "tagline": "Resume & cover-letter authoring",
         "description": (
             "Draft, tailor, and iterate on resumes and cover letters against a "

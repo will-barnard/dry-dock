@@ -42,8 +42,13 @@
               <label class="flex items-center gap-2 text-xs">
                 <input type="checkbox" name="active" value="true" {% if b.active %}checked{% endif %}> active
               </label>
-              <div class="flex gap-2">
+              <div class="flex gap-2 items-center">
                 <button class="text-xs bg-slate-900 text-white px-2 py-1 rounded">Save</button>
+                <button formaction="/workbench/bullets/{{ b.id }}/improve" formmethod="post"
+                        class="text-xs px-2 py-1 rounded bg-violet-50 text-violet-700 border border-violet-200 hover:bg-violet-100"
+                        title="Ask a worker to propose a strengthened version of this bullet">
+                  ✨ Improve
+                </button>
                 <button formaction="/workbench/bullets/{{ b.id }}/delete" formmethod="post"
                         class="text-xs text-rose-600">Delete</button>
               </div>
@@ -116,6 +121,50 @@
     best-fit items for a given job description.
   </p>
 </header>
+
+{# ── applications + tailoring (W2) ── #}
+<section class="mb-8 bg-white border border-slate-200 rounded p-4">
+  <h2 class="text-lg font-semibold">Applications</h2>
+  <p class="text-sm text-slate-500 mt-1">
+    One row per job you're applying to. Paste the job description, then
+    generate a tailored resume — the agent selects the best-fit items from
+    your library and may lightly rephrase bullets to mirror the JD's
+    terminology (truthfully). Each generate is a new version.
+  </p>
+
+  {% if applications %}
+    <ul class="mt-3 space-y-2">
+      {% for a in applications %}
+        <li class="border border-slate-100 rounded p-3 flex items-baseline justify-between">
+          <a href="/workbench/applications/{{ a.id }}" class="flex-1">
+            <div class="font-medium">
+              {{ a.role_title or 'role TBD' }}
+              {% if a.company %}<span class="text-slate-500"> @ {{ a.company }}</span>{% endif %}
+            </div>
+            <div class="text-xs text-slate-500 font-mono mt-0.5">
+              {{ a.created_at.strftime('%Y-%m-%d %H:%M') }}
+              {% if a.versions %} · {{ a.versions | length }} version{{ '' if a.versions | length == 1 else 's' }}{% endif %}
+            </div>
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="text-sm text-slate-400 italic mt-2">No applications yet — paste a job description below to start.</div>
+  {% endif %}
+
+  <form method="post" action="/workbench/applications" class="mt-4 bg-slate-50 border border-dashed border-slate-300 rounded p-3 space-y-2 text-sm">
+    <div class="grid grid-cols-2 gap-2">
+      <input name="company" placeholder="company (optional)"
+             class="border border-slate-300 rounded px-2 py-1">
+      <input name="role_title" placeholder="role title (optional)"
+             class="border border-slate-300 rounded px-2 py-1">
+    </div>
+    <textarea name="job_description" required rows="6" placeholder="paste the job description here…"
+              class="w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono"></textarea>
+    <button class="bg-slate-700 text-white px-3 py-1.5 rounded">+ new application</button>
+  </form>
+</section>
 
 {# ── agent-powered import ── #}
 <section class="mb-8 bg-white border border-slate-200 rounded p-4">

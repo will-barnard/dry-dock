@@ -32,12 +32,14 @@ from app.models import (
     CVProfile,
     CVSkill,
     CVSummary,
+    ResumeApplication,
+    TailoredResume,
     User,
     WorkbenchJob,
     WorkbenchJobKind,
     WorkbenchJobStatus,
 )
-from app.orchestrator.workbench_jobs import dispatch_import
+from app.orchestrator.workbench_jobs import dispatch_import, dispatch_improve, dispatch_tailor
 
 router = APIRouter(tags=["workbench"])
 
@@ -96,6 +98,10 @@ async def workbench_home(
         .limit(5)
     )).scalars().all())
 
+    applications = list((await session.execute(
+        select(ResumeApplication).order_by(desc(ResumeApplication.created_at))
+    )).scalars().all())
+
     return templates.TemplateResponse(
         request,
         "workbench.html",
@@ -107,6 +113,7 @@ async def workbench_home(
             "skills_by_category": skills_by_category,
             "entry_kinds": [k.value for k in CVEntryKind],
             "recent_imports": recent_imports,
+            "applications": applications,
         },
     )
 
@@ -190,6 +197,229 @@ async def import_status(
         "workbench_import.html",
         {"user": user, "job": job},
     )
+
+
+# ── applications + tailoring (W2) ──────────────────────────────────
+
+
+async def _latest_tailor_job(
+    session: AsyncSession, application_id: uuid.UUID
+) -> WorkbenchJob | None:
+    """Find the most recent tailor job whose input references this application.
+
+    Uses JSON ->> for the lookup since the application_id lives in the job's
+    `input` blob. Postgres-only — fine, we already require PG.
+    """
+    result = await session.execute(
+        select(WorkbenchJob)
+        .where(
+            WorkbenchJob.kind == WorkbenchJobKind.TAILOR,
+            WorkbenchJob.input["application_id"].astext == str(application_id),
+        )
+        .order_by(desc(WorkbenchJob.created_at))
+        .limit(1)
+    )
+    return result.scalars().first()
+
+
+@router.post("/workbench/applications", response_class=HTMLResponse, response_model=None)
+async def create_application(
+    request: Request,
+    company: str = Form(""),
+    role_title: str = Form(""),
+    job_description: str = Form(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    text = job_description.strip()
+    if not text:
+        raise HTTPException(400, "job description is required")
+    app = ResumeApplication(
+        company=company.strip(),
+        role_title=role_title.strip(),
+        job_description=text,
+    )
+    session.add(app)
+    await session.commit()
+    await session.refresh(app)
+    return RedirectResponse(f"/workbench/applications/{app.id}", status_code=303)
+
+
+@router.get("/workbench/applications/{application_id}", response_class=HTMLResponse, response_model=None)
+async def application_detail(
+    request: Request,
+    application_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> HTMLResponse:
+    app = await session.get(ResumeApplication, application_id)
+    if not app:
+        raise HTTPException(404, "application not found")
+    versions = list((await session.execute(
+        select(TailoredResume)
+        .where(TailoredResume.application_id == application_id)
+        .order_by(desc(TailoredResume.version))
+    )).scalars().all())
+    latest_job = await _latest_tailor_job(session, application_id)
+    return templates.TemplateResponse(
+        request,
+        "workbench_application.html",
+        {
+            "user": user,
+            "application": app,
+            "versions": versions,
+            "latest_job": latest_job,
+        },
+    )
+
+
+@router.post("/workbench/applications/{application_id}/tailor", response_class=HTMLResponse, response_model=None)
+async def tailor_application(
+    request: Request,
+    application_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    app = await session.get(ResumeApplication, application_id)
+    if not app:
+        raise HTTPException(404, "application not found")
+
+    job = WorkbenchJob(
+        kind=WorkbenchJobKind.TAILOR,
+        status=WorkbenchJobStatus.PENDING,
+        input={"application_id": str(application_id)},
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+
+    err = await dispatch_tailor(job.id)
+    if err:
+        async with session.begin():
+            j = await session.get(WorkbenchJob, job.id)
+            if j:
+                j.status = WorkbenchJobStatus.ERROR
+                j.error = err
+
+    return RedirectResponse(f"/workbench/applications/{application_id}", status_code=303)
+
+
+@router.post("/workbench/applications/{application_id}/delete", response_class=HTMLResponse, response_model=None)
+async def delete_application(
+    application_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    app = await session.get(ResumeApplication, application_id)
+    if app:
+        await session.delete(app)  # cascades to TailoredResume rows
+        await session.commit()
+    return RedirectResponse("/workbench", status_code=303)
+
+
+# ── bullet improvement (W3) ────────────────────────────────────────
+
+
+@router.post("/workbench/bullets/{bullet_id}/improve", response_class=HTMLResponse, response_model=None)
+async def improve_bullet(
+    bullet_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    bullet = await session.get(CVBullet, bullet_id)
+    if not bullet:
+        raise HTTPException(404, "bullet not found")
+
+    job = WorkbenchJob(
+        kind=WorkbenchJobKind.IMPROVE,
+        status=WorkbenchJobStatus.PENDING,
+        input={"bullet_id": str(bullet_id)},
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+
+    err = await dispatch_improve(job.id)
+    if err:
+        async with session.begin():
+            j = await session.get(WorkbenchJob, job.id)
+            if j:
+                j.status = WorkbenchJobStatus.ERROR
+                j.error = err
+
+    return RedirectResponse(f"/workbench/improvements/{job.id}", status_code=303)
+
+
+@router.get("/workbench/improvements/{job_id}", response_class=HTMLResponse, response_model=None)
+async def improve_review(
+    request: Request,
+    job_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> HTMLResponse:
+    job = await session.get(WorkbenchJob, job_id)
+    if not job or job.kind != WorkbenchJobKind.IMPROVE:
+        raise HTTPException(404, "improvement job not found")
+    bullet_id_raw = (job.input or {}).get("bullet_id")
+    bullet = None
+    entry = None
+    if bullet_id_raw:
+        try:
+            bullet = await session.get(CVBullet, uuid.UUID(str(bullet_id_raw)))
+        except (ValueError, TypeError):
+            bullet = None
+    if bullet:
+        entry = await session.get(CVEntry, bullet.entry_id)
+    return templates.TemplateResponse(
+        request,
+        "workbench_improve.html",
+        {"user": user, "job": job, "bullet": bullet, "entry": entry},
+    )
+
+
+@router.post("/workbench/improvements/{job_id}/apply", response_class=HTMLResponse, response_model=None)
+async def improve_apply(
+    job_id: uuid.UUID,
+    text: str = Form(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    """Accept the (possibly edited) proposed bullet text and write it back."""
+    job = await session.get(WorkbenchJob, job_id)
+    if not job or job.kind != WorkbenchJobKind.IMPROVE:
+        raise HTTPException(404, "improvement job not found")
+    bullet_id_raw = (job.input or {}).get("bullet_id")
+    if not bullet_id_raw:
+        raise HTTPException(400, "job has no bullet_id")
+    try:
+        bullet = await session.get(CVBullet, uuid.UUID(str(bullet_id_raw)))
+    except (ValueError, TypeError):
+        bullet = None
+    if not bullet:
+        raise HTTPException(404, "bullet no longer exists")
+
+    new_text = text.strip()
+    if not new_text:
+        raise HTTPException(400, "the proposed text is empty")
+    bullet.text = new_text
+    # Stamp the job with what was actually applied so the audit trail captures
+    # the user's edits, not just the model's proposal.
+    job.result = {**(job.result or {}), "applied": new_text}
+    await session.commit()
+    return RedirectResponse("/workbench", status_code=303)
+
+
+@router.post("/workbench/improvements/{job_id}/dismiss", response_class=HTMLResponse, response_model=None)
+async def improve_dismiss(
+    job_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    job = await session.get(WorkbenchJob, job_id)
+    if job:
+        job.result = {**(job.result or {}), "dismissed": True}
+        await session.commit()
+    return RedirectResponse("/workbench", status_code=303)
 
 
 # ── profile ────────────────────────────────────────────────────────

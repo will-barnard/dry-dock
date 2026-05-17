@@ -29,6 +29,8 @@ from app.models import (
     CVProfile,
     CVSkill,
     CVSummary,
+    ResumeApplication,
+    TailoredResume,
     WorkbenchJob,
     WorkbenchJobStatus,
 )
@@ -428,3 +430,497 @@ async def handle_import_result(
             job.result = {"raw": parsed}
         await session.commit()
     log.info("workbench.import_result_applied", job=str(job_id), status=job.status.value)
+
+
+# ════════════════════════ tailoring (W2) ════════════════════════════
+#
+# A tailor job reads the WHOLE CV library (every entry/bullet/skill carries an
+# id) plus a job description, and returns a structured *selection*: which
+# bullets and skills to include, plus a freshly-written summary. The model may
+# lightly rephrase chosen bullets to mirror the JD's terminology — constrained
+# to stay truthful. The orchestrator validates every id against the library,
+# applies the rephrases, and assembles the Markdown deterministically so
+# formatting is identical across versions.
+
+
+async def serialize_library_with_ids(session: AsyncSession) -> str:
+    """Full CV library serialized for tailoring — entries, bullets, and skills
+    all carry their database ids so the model can reference them precisely."""
+    parts: list[str] = []
+
+    profile = (await session.execute(select(CVProfile))).scalars().first()
+    parts.append("### Profile")
+    if profile and (profile.full_name or profile.email):
+        parts.append(f"name: {profile.full_name or '(none)'}")
+        for label, val in (
+            ("headline", profile.headline), ("location", profile.location),
+            ("email", profile.email), ("phone", profile.phone),
+        ):
+            if val:
+                parts.append(f"{label}: {val}")
+    else:
+        parts.append("(no profile set)")
+
+    summaries = list((await session.execute(
+        select(CVSummary).order_by(CVSummary.created_at)
+    )).scalars().all())
+    parts.append("\n### Summary variants (reference — write a fresh tailored summary, don't copy verbatim)")
+    if summaries:
+        for s in summaries:
+            parts.append(f"- [{s.label}] {s.text}")
+    else:
+        parts.append("(none — write a summary from scratch based on the entries)")
+
+    entries = list((await session.execute(
+        select(CVEntry).where(CVEntry.active.is_(True)).order_by(CVEntry.kind, CVEntry.created_at)
+    )).scalars().all())
+    parts.append("\n### Entries")
+    for e in entries:
+        dates = " – ".join(filter(None, [e.start_date, e.end_date])) if (e.start_date or e.end_date) else ""
+        parts.append(
+            f"[{e.kind.value}] entry_id={e.id} | {e.organization}"
+            f"{' — ' + e.title if e.title else ''}"
+            f"{' | ' + e.location if e.location else ''}"
+            f"{' | ' + dates if dates else ''}"
+        )
+        if e.description:
+            parts.append(f"  description: {e.description}")
+        for b in e.bullets:
+            if not b.active:
+                continue
+            tags = ",".join(b.tags or [])
+            parts.append(f"  bullet_id={b.id} tags=[{tags}] :: {b.text}")
+    if not entries:
+        parts.append("(none)")
+
+    skills = list((await session.execute(
+        select(CVSkill).order_by(CVSkill.category, CVSkill.name)
+    )).scalars().all())
+    parts.append("\n### Skills")
+    if skills:
+        for s in skills:
+            parts.append(f"skill_id={s.id} | [{s.category}] {s.name}")
+    else:
+        parts.append("(none)")
+
+    return "\n".join(parts)
+
+
+_TAILOR_SYSTEM = """\
+You tailor a resume to a specific job description by SELECTING the best-fit
+items from a CV library. You do not invent experience. You may lightly
+rephrase chosen bullet points to mirror the job description's terminology —
+but every rephrase must stay strictly truthful to the original bullet's
+meaning. Never add accomplishments, numbers, or technologies that aren't in
+the source bullet.
+
+You will be given the full CV library (every entry, bullet, and skill carries
+an id) and a job description. Produce a JSON selection:
+
+- Write a fresh `summary` paragraph tailored to this job (2–4 sentences).
+- Pick the `skill_ids` most relevant to the job — favor what the JD asks for.
+- For each relevant entry, list the `bullet_id`s worth including, in priority
+  order. For a bullet you want to reword, set `rephrased` to the new text;
+  otherwise set it to null and the original is used verbatim.
+- Include only entries and bullets that strengthen the application for THIS
+  job. It's fine to drop weak entries entirely.
+- Give a short `rationale` explaining the overall choices.
+
+Output ONLY a single JSON object in a ```json code block:
+
+```json
+{
+  "summary": "tailored summary paragraph...",
+  "skill_ids": ["<uuid>", "<uuid>"],
+  "entries": [
+    {
+      "entry_id": "<uuid>",
+      "bullets": [
+        {"bullet_id": "<uuid>", "rephrased": "reworded text or null"}
+      ]
+    }
+  ],
+  "rationale": "1-3 sentences on why these items fit this job"
+}
+```
+
+Every id MUST come from the library below — do not invent ids.
+"""
+
+
+def build_tailor_messages(library_text: str, job_description: str) -> list[dict[str, str]]:
+    user = (
+        f"## CV library\n{library_text}\n\n"
+        f"## Job description\n{job_description}\n\n"
+        f"## Task\nProduce the JSON selection per the rules. Output only the JSON object."
+    )
+    return [
+        {"role": "system", "content": _TAILOR_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+async def dispatch_tailor(job_id: uuid.UUID) -> str | None:
+    """Build the tailor prompt and send it to a worker. Returns None on
+    success, or an error string the caller should record on the job."""
+    async with SessionLocal() as session:
+        job = await session.get(WorkbenchJob, job_id)
+        if not job:
+            return "job not found"
+        application_id = (job.input or {}).get("application_id")
+        if not application_id:
+            return "job has no application_id"
+        app = await session.get(ResumeApplication, uuid.UUID(str(application_id)))
+        if not app:
+            return "application not found"
+        if not (app.job_description or "").strip():
+            return "the application has no job description"
+        library_text = await serialize_library_with_ids(session)
+        job_description = app.job_description
+
+    worker = await _pick_worker(_IMPORT_POOLS)
+    if worker is None:
+        return (
+            "No worker is online in the docs / researcher / planner / coder "
+            "pools to run the tailoring job."
+        )
+
+    msg = WorkbenchRequestMsg(
+        job_id=job_id,
+        kind="tailor",
+        model=None,
+        messages=build_tailor_messages(library_text, job_description),
+    )
+    try:
+        await worker.send(msg.model_dump(mode="json"))
+    except Exception as exc:
+        log.warning("workbench.tailor_dispatch_failed", job=str(job_id), error=str(exc))
+        return f"failed to reach worker {worker.name}: {exc}"
+
+    async with SessionLocal() as session:
+        job = await session.get(WorkbenchJob, job_id)
+        if job:
+            job.status = WorkbenchJobStatus.RUNNING
+            job.worker_name = worker.name
+            await session.commit()
+    log.info("workbench.tailor_dispatched", job=str(job_id), worker=worker.name)
+    return None
+
+
+async def _assemble_resume(
+    session: AsyncSession, selection: dict
+) -> tuple[str, dict]:
+    """Validate the model's selection against the library and assemble the
+    tailored resume as Markdown. Returns (markdown, validated_selection).
+
+    Any id the model invented or that points at a missing/cross-entry record
+    is silently dropped — the resume is built only from real library items.
+    """
+    profile = (await session.execute(select(CVProfile))).scalars().first()
+
+    # ── header ──
+    lines: list[str] = []
+    if profile and profile.full_name:
+        lines.append(f"# {profile.full_name}")
+        contact = " · ".join(filter(None, [
+            profile.location, profile.email, profile.phone,
+            *(profile.links or {}).values(),
+        ]))
+        if contact:
+            lines.append(contact)
+        lines.append("")
+
+    # ── summary ──
+    summary = str(selection.get("summary") or "").strip()
+    if summary:
+        lines.append("## Summary")
+        lines.append(summary)
+        lines.append("")
+
+    # ── skills (validated, grouped by category) ──
+    skill_ids: list[str] = [str(s) for s in (selection.get("skill_ids") or [])]
+    chosen_skills: list[CVSkill] = []
+    for sid in skill_ids:
+        try:
+            sk = await session.get(CVSkill, uuid.UUID(sid))
+        except (ValueError, TypeError):
+            sk = None
+        if sk:
+            chosen_skills.append(sk)
+    if chosen_skills:
+        lines.append("## Skills")
+        by_cat: dict[str, list[str]] = {}
+        for sk in chosen_skills:
+            by_cat.setdefault(sk.category, []).append(sk.name)
+        for cat, names in by_cat.items():
+            lines.append(f"- **{cat}**: {', '.join(names)}")
+        lines.append("")
+
+    # ── entries, grouped by kind ──
+    validated_entries: list[dict] = []
+    entries_by_kind: dict[CVEntryKind, list[tuple[CVEntry, list[str]]]] = {
+        CVEntryKind.EXPERIENCE: [], CVEntryKind.PROJECT: [], CVEntryKind.EDUCATION: [],
+    }
+    for e_sel in selection.get("entries") or []:
+        if not isinstance(e_sel, dict):
+            continue
+        try:
+            entry = await session.get(CVEntry, uuid.UUID(str(e_sel.get("entry_id"))))
+        except (ValueError, TypeError):
+            entry = None
+        if entry is None:
+            continue
+        # Map this entry's real bullets so we can validate + apply rephrases.
+        bullet_by_id = {str(b.id): b for b in entry.bullets}
+        rendered_bullets: list[str] = []
+        validated_bullets: list[dict] = []
+        for b_sel in e_sel.get("bullets") or []:
+            if not isinstance(b_sel, dict):
+                continue
+            real = bullet_by_id.get(str(b_sel.get("bullet_id")))
+            if real is None:
+                continue  # invented or cross-entry id — drop it
+            rephrased = b_sel.get("rephrased")
+            text = str(rephrased).strip() if rephrased else real.text
+            rendered_bullets.append(text)
+            validated_bullets.append({
+                "bullet_id": str(real.id),
+                "rephrased": text if rephrased else None,
+            })
+        if rendered_bullets:
+            entries_by_kind[entry.kind].append((entry, rendered_bullets))
+            validated_entries.append({
+                "entry_id": str(entry.id), "bullets": validated_bullets,
+            })
+
+    _SECTION_TITLES = {
+        CVEntryKind.EXPERIENCE: "Experience",
+        CVEntryKind.PROJECT: "Projects",
+        CVEntryKind.EDUCATION: "Education",
+    }
+    for kind, title in _SECTION_TITLES.items():
+        group = entries_by_kind[kind]
+        if not group:
+            continue
+        lines.append(f"## {title}")
+        for entry, bullets in group:
+            heading = entry.organization
+            if entry.title:
+                heading += f" — {entry.title}"
+            lines.append(f"### {heading}")
+            meta = " · ".join(filter(None, [
+                entry.location,
+                " – ".join(filter(None, [entry.start_date, entry.end_date])) or None,
+                entry.url,
+            ]))
+            if meta:
+                lines.append(f"*{meta}*")
+            if entry.description:
+                lines.append(entry.description)
+            for b in bullets:
+                lines.append(f"- {b}")
+            lines.append("")
+
+    markdown = "\n".join(lines).strip() + "\n"
+    validated = {
+        "summary": summary,
+        "skill_ids": [str(s.id) for s in chosen_skills],
+        "entries": validated_entries,
+        "rationale": str(selection.get("rationale") or "").strip(),
+    }
+    return markdown, validated
+
+
+# ════════════════════════ improve (W3) ═════════════════════════════
+#
+# A single-bullet rewrite. The model gets one bullet (plus a little context —
+# what entry it belongs to and the bullet's tags) and proposes a strengthened
+# version. The result is stored on the job for human review; nothing in the
+# library is mutated until the user explicitly clicks Apply on the review
+# screen. Truthfulness rule is the same as tailoring: no invented numbers,
+# technologies, or accomplishments — only stronger wording of what's there.
+
+
+_IMPROVE_SYSTEM = """\
+You improve resume bullet points. The user will give you ONE bullet plus a
+little context. Output ONE strengthened version of that bullet.
+
+Rules — non-negotiable:
+- Stay strictly truthful. Do NOT add new numbers, technologies, results,
+  scope, or claims that aren't already in the source bullet. If the source
+  doesn't say "increased X by 40%", you can't either.
+- Use a strong action verb to lead.
+- Be concrete where the source is concrete; do not invent specificity.
+- Keep resume tense (past for past roles, present-tense fine for ongoing).
+- Keep it tight — one sentence, ideally under 25 words.
+- Output ONLY the improved bullet text. No quotes around it, no prose
+  before or after, no list marker, no leading dash.
+"""
+
+
+def build_improve_messages(
+    bullet_text: str, entry_label: str, tags: list[str]
+) -> list[dict[str, str]]:
+    tag_str = ", ".join(tags) if tags else "(none)"
+    user = (
+        f"## Context\nThis bullet is on the entry: {entry_label}\n"
+        f"Tags: {tag_str}\n\n"
+        f"## Original bullet\n{bullet_text}\n\n"
+        f"## Task\nProduce one improved version of the bullet, per the rules."
+    )
+    return [
+        {"role": "system", "content": _IMPROVE_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+async def dispatch_improve(job_id: uuid.UUID) -> str | None:
+    """Build the improve prompt and send it to a worker."""
+    async with SessionLocal() as session:
+        job = await session.get(WorkbenchJob, job_id)
+        if not job:
+            return "job not found"
+        bullet_id = (job.input or {}).get("bullet_id")
+        if not bullet_id:
+            return "job has no bullet_id"
+        try:
+            bullet = await session.get(CVBullet, uuid.UUID(str(bullet_id)))
+        except (ValueError, TypeError):
+            bullet = None
+        if not bullet:
+            return "bullet not found"
+        entry = await session.get(CVEntry, bullet.entry_id)
+        entry_label = entry.organization if entry else "(unknown)"
+        if entry and entry.title:
+            entry_label += f" — {entry.title}"
+        messages = build_improve_messages(bullet.text, entry_label, list(bullet.tags or []))
+
+    worker = await _pick_worker(_IMPORT_POOLS)
+    if worker is None:
+        return (
+            "No worker is online in the docs / researcher / planner / coder "
+            "pools to run the improvement."
+        )
+
+    msg = WorkbenchRequestMsg(
+        job_id=job_id,
+        kind="improve",
+        model=None,
+        messages=messages,
+    )
+    try:
+        await worker.send(msg.model_dump(mode="json"))
+    except Exception as exc:
+        log.warning("workbench.improve_dispatch_failed", job=str(job_id), error=str(exc))
+        return f"failed to reach worker {worker.name}: {exc}"
+
+    async with SessionLocal() as session:
+        job = await session.get(WorkbenchJob, job_id)
+        if job:
+            job.status = WorkbenchJobStatus.RUNNING
+            job.worker_name = worker.name
+            await session.commit()
+    log.info("workbench.improve_dispatched", job=str(job_id), worker=worker.name)
+    return None
+
+
+async def handle_improve_result(
+    job_id: uuid.UUID, success: bool, content: str, error: str | None
+) -> None:
+    """Store the model's proposal on the job. Application to the bullet is a
+    separate user-driven step (the review screen's Apply button)."""
+    async with SessionLocal() as session:
+        job = await session.get(WorkbenchJob, job_id)
+        if not job:
+            log.warning("workbench.improve_result_no_job", job=str(job_id))
+            return
+        if not success:
+            job.status = WorkbenchJobStatus.ERROR
+            job.error = error or "worker reported failure"
+            await session.commit()
+            return
+        proposed = (content or "").strip()
+        # The model occasionally wraps its single line in quotes or adds a leading
+        # bullet marker — strip a few common decorations defensively.
+        for prefix in ("- ", "* ", "• "):
+            if proposed.startswith(prefix):
+                proposed = proposed[len(prefix):].strip()
+                break
+        if (proposed.startswith('"') and proposed.endswith('"')) or (
+            proposed.startswith("'") and proposed.endswith("'")
+        ):
+            proposed = proposed[1:-1].strip()
+        if not proposed:
+            job.status = WorkbenchJobStatus.ERROR
+            job.error = "the model returned an empty proposal"
+            await session.commit()
+            return
+        job.status = WorkbenchJobStatus.DONE
+        job.error = None
+        job.result = {"proposed": proposed}
+        await session.commit()
+    log.info("workbench.improve_result_applied", job=str(job_id))
+
+
+async def handle_tailor_result(
+    job_id: uuid.UUID, success: bool, content: str, error: str | None
+) -> None:
+    """Worker finished a tailor job — parse the selection, validate it against
+    the library, assemble the Markdown, and store it as a new TailoredResume
+    version on the application."""
+    async with SessionLocal() as session:
+        job = await session.get(WorkbenchJob, job_id)
+        if not job:
+            log.warning("workbench.tailor_result_no_job", job=str(job_id))
+            return
+
+        if not success:
+            job.status = WorkbenchJobStatus.ERROR
+            job.error = error or "worker reported failure"
+            await session.commit()
+            return
+
+        application_id = (job.input or {}).get("application_id")
+        try:
+            app = await session.get(ResumeApplication, uuid.UUID(str(application_id)))
+        except (ValueError, TypeError):
+            app = None
+        if app is None:
+            job.status = WorkbenchJobStatus.ERROR
+            job.error = "application no longer exists"
+            await session.commit()
+            return
+
+        parsed = _extract_json_object(content)
+        if parsed is None:
+            job.status = WorkbenchJobStatus.ERROR
+            job.error = "could not parse a JSON selection from the model response"
+            job.result = {"raw": content[:8000]}
+            await session.commit()
+            return
+
+        try:
+            markdown, validated = await _assemble_resume(session, parsed)
+            existing = (await session.execute(
+                select(TailoredResume).where(TailoredResume.application_id == app.id)
+            )).scalars().all()
+            next_version = (max((t.version for t in existing), default=0)) + 1
+            tailored = TailoredResume(
+                application_id=app.id,
+                version=next_version,
+                selection=validated,
+                rendered=markdown,
+                rationale=validated.get("rationale") or None,
+            )
+            session.add(tailored)
+            await session.flush()
+            job.status = WorkbenchJobStatus.DONE
+            job.error = None
+            job.result = {"tailored_resume_id": str(tailored.id), "version": next_version}
+        except Exception as exc:  # noqa: BLE001
+            log.exception("workbench.tailor_assemble_failed", job=str(job_id))
+            job.status = WorkbenchJobStatus.ERROR
+            job.error = f"assembly failed: {exc}"
+            job.result = {"raw": parsed}
+        await session.commit()
+    log.info("workbench.tailor_result_applied", job=str(job_id), status=job.status.value)

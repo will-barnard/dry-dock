@@ -117,16 +117,19 @@ async def home(
     project_count = (await session.execute(
         select(func.count()).select_from(Project)
     )).scalar_one()
-    live_count = len(await registry.all())
+    live = await registry.all()
+    workers = list((await session.execute(select(Worker).order_by(Worker.name))).scalars().all())
     return templates.TemplateResponse(
         request,
         "home.html",
         {
             "user": user,
             "modules": MODULES,
+            "workers": workers,
+            "live_count": len(live),
             "engineer_stats": {
                 "projects": project_count,
-                "workers_online": live_count,
+                "workers_online": len(live),
             },
         },
     )

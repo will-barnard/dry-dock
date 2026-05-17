@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,11 +25,25 @@ from app.db import get_session
 from app.models import Conversation, ConversationMessage, MessageRole, User
 from app.orchestrator.chat import dispatch_turn
 from app.orchestrator.pools import KNOWN_POOLS
+from app.orchestrator.registry import registry
 
 router = APIRouter(tags=["operator"])
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+@router.get("/operator/pools/{pool}/models", response_model=None)
+async def pool_models(
+    pool: str,
+    user: User = Depends(get_current_user),
+) -> JSONResponse:
+    """Return the union of installed_models across all live workers in a pool."""
+    if pool not in KNOWN_POOLS:
+        raise HTTPException(400, f"unknown pool: {pool}")
+    workers = await registry.by_pool(pool)
+    models: list[str] = sorted({m for w in workers for m in w.installed_models})
+    return JSONResponse({"models": models})
 
 
 @router.get("/operator", response_class=HTMLResponse, response_model=None)

@@ -37,7 +37,7 @@
                class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm">
       </label>
       <label class="text-sm block">pool
-        <select name="pool" class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm font-mono">
+        <select id="pool-select" name="pool" class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm font-mono">
           {% for p in pools %}
             <option value="{{ p }}" {% if p == 'researcher' %}selected{% endif %}>{{ p }}</option>
           {% endfor %}
@@ -47,9 +47,12 @@
           natural default — pure text, no git clone.
         </span>
       </label>
-      <label class="text-sm block">model override <span class="text-slate-400">(optional)</span>
-        <input name="model" placeholder="leave blank for worker default"
+      <label class="text-sm block">model <span class="text-slate-400">(optional)</span>
+        <input id="model-input" name="model" placeholder="leave blank for worker default"
+               list="model-list"
                class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm font-mono">
+        <datalist id="model-list"></datalist>
+        <span id="model-hint" class="text-xs text-slate-400 mt-1 block"></span>
       </label>
       <label class="text-sm block">system prompt <span class="text-slate-400">(optional)</span>
         <textarea name="system_prompt" rows="3"
@@ -59,4 +62,34 @@
     </form>
   </aside>
 </section>
+
+<script>
+  const poolSelect = document.getElementById("pool-select");
+  const modelList  = document.getElementById("model-list");
+  const modelHint  = document.getElementById("model-hint");
+
+  async function fetchModels(pool) {
+    modelList.innerHTML = "";
+    modelHint.textContent = "loading…";
+    try {
+      const res = await fetch(`/operator/pools/${encodeURIComponent(pool)}/models`);
+      const data = await res.json();
+      if (data.models.length === 0) {
+        modelHint.textContent = "No workers online in this pool.";
+        return;
+      }
+      data.models.forEach(function (m) {
+        const opt = document.createElement("option");
+        opt.value = m;
+        modelList.appendChild(opt);
+      });
+      modelHint.textContent = data.models.length + " model(s) available — click the field to browse.";
+    } catch (e) {
+      modelHint.textContent = "";
+    }
+  }
+
+  poolSelect.addEventListener("change", function () { fetchModels(this.value); });
+  fetchModels(poolSelect.value);
+</script>
 {% endblock %}

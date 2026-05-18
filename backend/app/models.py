@@ -376,9 +376,13 @@ class CVEntry(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # `lazy="selectin"` makes bullets eager-load via a second SELECT IN query
+    # whenever a CVEntry is loaded. The async session can't do implicit
+    # lazy-load (raises MissingGreenlet on attribute access), and bullets are
+    # tiny + always wanted alongside their entry, so this is the right default.
     bullets: Mapped[list["CVBullet"]] = relationship(
         back_populates="entry", cascade="all, delete-orphan",
-        order_by="CVBullet.sort_order",
+        order_by="CVBullet.sort_order", lazy="selectin",
     )
 
 

@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.auth import get_current_user
 from app.db import get_session
@@ -77,13 +78,14 @@ async def workbench_home(
     summaries = list((await session.execute(
         select(CVSummary).order_by(CVSummary.sort_order, CVSummary.created_at)
     )).scalars().all())
+    # Eager-load bullets in the same query — async sessions don't support
+    # implicit lazy-load (raises MissingGreenlet), so selectinload here
+    # is required for the template to iterate `entry.bullets` safely.
     entries = list((await session.execute(
-        select(CVEntry).order_by(CVEntry.sort_order, CVEntry.created_at)
+        select(CVEntry)
+        .options(selectinload(CVEntry.bullets))
+        .order_by(CVEntry.sort_order, CVEntry.created_at)
     )).scalars().all())
-    # Bullets eager-load via the relationship's order_by; touch them so the
-    # template can iterate without a lazy-load surprise.
-    for e in entries:
-        _ = e.bullets
     skills = list((await session.execute(
         select(CVSkill).order_by(CVSkill.category, CVSkill.sort_order, CVSkill.name)
     )).scalars().all())

@@ -231,6 +231,9 @@ async def dispatch_import(job_id: uuid.UUID) -> str | None:
     except Exception as exc:
         log.warning("workbench.dispatch_failed", job=str(job_id), error=str(exc))
         return f"failed to reach worker {worker.name}: {exc}"
+    # Track the job as in-flight on this LiveWorker so the disconnect path can
+    # mark it ERROR if the worker drops before sending a result.
+    worker.current_workbench_jobs.add(job_id)
 
     async with SessionLocal() as session:
         job = await session.get(WorkbenchJob, job_id)
@@ -597,6 +600,7 @@ async def dispatch_tailor(job_id: uuid.UUID) -> str | None:
     except Exception as exc:
         log.warning("workbench.tailor_dispatch_failed", job=str(job_id), error=str(exc))
         return f"failed to reach worker {worker.name}: {exc}"
+    worker.current_workbench_jobs.add(job_id)
 
     async with SessionLocal() as session:
         job = await session.get(WorkbenchJob, job_id)
@@ -877,6 +881,7 @@ async def dispatch_cover_letter(job_id: uuid.UUID) -> str | None:
     except Exception as exc:
         log.warning("workbench.cover_letter_dispatch_failed", job=str(job_id), error=str(exc))
         return f"failed to reach worker {worker.name}: {exc}"
+    worker.current_workbench_jobs.add(job_id)
 
     async with SessionLocal() as session:
         job = await session.get(WorkbenchJob, job_id)
@@ -1022,6 +1027,7 @@ async def dispatch_improve(job_id: uuid.UUID) -> str | None:
     except Exception as exc:
         log.warning("workbench.improve_dispatch_failed", job=str(job_id), error=str(exc))
         return f"failed to reach worker {worker.name}: {exc}"
+    worker.current_workbench_jobs.add(job_id)
 
     async with SessionLocal() as session:
         job = await session.get(WorkbenchJob, job_id)
@@ -1133,3 +1139,107 @@ async def handle_tailor_result(
             job.result = {"raw": parsed}
         await session.commit()
     log.info("workbench.tailor_result_applied", job=str(job_id), status=job.status.value)
+
+
+# ════════════════════════ disconnect + watchdog ════════════════════
+#
+# Workbench jobs aren't part of the dispatcher's QUEUED→CLAIMED→RUNNING loop —
+# they're one-shot inferences with no retry path. That means a worker dropping
+# mid-job used to strand the job in RUNNING forever. Two safety nets fix that:
+#
+#   1. fail_jobs_on_worker_disconnect — called from the WS finally block,
+#      runs over the set of in-flight job ids the LiveWorker was tracking and
+#      moves any still-RUNNING ones to ERROR.
+#
+#   2. workbench_watchdog_loop — periodic sweep that catches anything missed
+#      by (1) (orchestrator restart, message lost mid-flight, etc.). Any
+#      PENDING/RUNNING WorkbenchJob whose updated_at is older than the stale
+#      window gets moved to ERROR.
+
+from datetime import datetime, timedelta, timezone
+
+
+# Inferences are short. 15 minutes is a deliberately generous ceiling — a slow
+# local model on a tiny machine can still chew on a big import for a while.
+WORKBENCH_STALE_AFTER = timedelta(minutes=15)
+# How often the watchdog scans. Cheap query, so frequent is fine.
+WORKBENCH_WATCHDOG_INTERVAL_SECONDS = 30.0
+
+
+async def fail_jobs_on_worker_disconnect(job_ids: set[uuid.UUID], worker_name: str) -> None:
+    """Mark any in-flight Workbench jobs as ERROR when the worker that owned
+    them disconnected before sending a result. Skips jobs that already reached
+    DONE/ERROR — the result might have raced in just before the socket closed.
+    """
+    if not job_ids:
+        return
+    failed: list[str] = []
+    async with SessionLocal() as session:
+        async with session.begin():
+            for jid in list(job_ids):
+                job = await session.get(WorkbenchJob, jid)
+                if job is None:
+                    continue
+                if job.status not in (
+                    WorkbenchJobStatus.PENDING, WorkbenchJobStatus.RUNNING
+                ):
+                    continue
+                job.status = WorkbenchJobStatus.ERROR
+                job.error = (
+                    f"worker {worker_name} disconnected before returning a result"
+                )
+                failed.append(str(jid))
+    if failed:
+        log.warning(
+            "workbench.jobs_failed_on_disconnect",
+            worker=worker_name, count=len(failed), jobs=failed,
+        )
+
+
+async def _sweep_stale_workbench_jobs() -> int:
+    """Single pass — return number of jobs failed. Runs from the watchdog loop
+    AND can be called by hand during tests / debugging."""
+    cutoff = datetime.now(timezone.utc) - WORKBENCH_STALE_AFTER
+    failed = 0
+    async with SessionLocal() as session:
+        async with session.begin():
+            result = await session.execute(
+                select(WorkbenchJob).where(
+                    WorkbenchJob.status.in_(
+                        (WorkbenchJobStatus.PENDING, WorkbenchJobStatus.RUNNING)
+                    ),
+                    WorkbenchJob.updated_at < cutoff,
+                )
+            )
+            for job in result.scalars().all():
+                job.status = WorkbenchJobStatus.ERROR
+                job.error = (
+                    job.error
+                    or f"timed out — job stuck in {job.status.value} for "
+                       f">{int(WORKBENCH_STALE_AFTER.total_seconds() // 60)}m"
+                )
+                failed += 1
+    if failed:
+        log.warning("workbench.watchdog_failed_stale_jobs", count=failed)
+    return failed
+
+
+async def workbench_watchdog_loop(stop: "asyncio.Event") -> None:
+    """Periodic safety-net sweep. Started from main.lifespan, stopped on
+    shutdown via the supplied event."""
+    import asyncio as _asyncio  # local alias keeps the top-of-file imports stable
+    log.info("workbench.watchdog_started",
+             interval=WORKBENCH_WATCHDOG_INTERVAL_SECONDS,
+             stale_minutes=WORKBENCH_STALE_AFTER.total_seconds() / 60)
+    while not stop.is_set():
+        try:
+            await _sweep_stale_workbench_jobs()
+        except Exception:
+            log.exception("workbench.watchdog_error")
+        try:
+            await _asyncio.wait_for(
+                stop.wait(), timeout=WORKBENCH_WATCHDOG_INTERVAL_SECONDS
+            )
+        except _asyncio.TimeoutError:
+            pass
+    log.info("workbench.watchdog_stopped")

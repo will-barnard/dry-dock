@@ -59,6 +59,7 @@ from app.orchestrator.protocol import (
     WorkbenchResultMsg,
 )
 from app.orchestrator.workbench_jobs import (
+    fail_jobs_on_worker_disconnect,
     handle_cover_letter_result,
     handle_import_result,
     handle_improve_result,
@@ -414,6 +415,9 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
             elif isinstance(msg, ChatErrorMsg):
                 await chat_on_error(msg.conversation_id, msg.assistant_message_id, msg.error)
             elif isinstance(msg, WorkbenchResultMsg):
+                # Clear in-flight tracking so the disconnect path doesn't try
+                # to fail an already-completed job if the socket drops next.
+                live.current_workbench_jobs.discard(msg.job_id)
                 # One handler per Workbench job kind.
                 if msg.kind == "import":
                     await handle_import_result(
@@ -453,3 +457,13 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
                     if t and t.status in (TaskStatus.CLAIMED, TaskStatus.RUNNING):
                         t.status = TaskStatus.QUEUED if t.attempt < t.max_attempts else TaskStatus.FAILED
             dispatcher.poke()
+        # Fail any Workbench jobs that were in flight on this worker. They
+        # don't have a retry path like Tasks do, so the safest thing is to
+        # surface ERROR so the user knows the job died and can retry.
+        if live.current_workbench_jobs:
+            try:
+                await fail_jobs_on_worker_disconnect(
+                    set(live.current_workbench_jobs), reg.name
+                )
+            except Exception:
+                log.exception("worker.workbench_disconnect_handler_failed")

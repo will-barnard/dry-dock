@@ -1,6 +1,7 @@
 """FastAPI entrypoint for the dry-dock orchestrator."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -14,6 +15,7 @@ from app.auth import AuthRedirect, get_current_user
 from app.config import get_settings
 from app.db import Base, engine
 from app.orchestrator.dispatcher import dispatcher
+from app.orchestrator.workbench_jobs import workbench_watchdog_loop
 from app.routes import (
     auth,
     dashboard,
@@ -88,11 +90,23 @@ async def lifespan(app: FastAPI):
             await conn.execute(text(stmt))
 
     await dispatcher.start()
+    # Workbench watchdog — periodic sweep that moves stale RUNNING/PENDING
+    # Workbench jobs (mid-job worker death, orchestrator restart, etc.) to
+    # ERROR so the UI surfaces them instead of pinning forever.
+    workbench_watchdog_stop = asyncio.Event()
+    workbench_watchdog_task = asyncio.create_task(
+        workbench_watchdog_loop(workbench_watchdog_stop), name="workbench_watchdog"
+    )
     log.info("orchestrator.started")
     try:
         yield
     finally:
         await dispatcher.stop()
+        workbench_watchdog_stop.set()
+        try:
+            await asyncio.wait_for(workbench_watchdog_task, timeout=5.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+            pass
         await engine.dispose()
         log.info("orchestrator.stopped")
 

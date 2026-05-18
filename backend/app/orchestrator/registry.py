@@ -28,6 +28,12 @@ class LiveWorker:
     gpu_model: str | None = None
     hardware_class: str = ""
     current_task_id: uuid.UUID | None = None
+    # Workbench jobs in flight on this worker. A worker can have several
+    # concurrent non-streaming inferences (the worker runtime spawns each one
+    # as its own asyncio task), so this is a set rather than a scalar. The
+    # disconnect path uses it to mark stranded jobs ERROR instead of leaving
+    # them pinned in RUNNING forever.
+    current_workbench_jobs: set[uuid.UUID] = field(default_factory=set)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def send(self, payload: dict[str, Any]) -> None:

@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.db import get_session
 from app.models import (
+    CoverLetter,
     CVBullet,
     CVEntry,
     CVEntryKind,
@@ -39,7 +40,13 @@ from app.models import (
     WorkbenchJobKind,
     WorkbenchJobStatus,
 )
-from app.orchestrator.workbench_jobs import dispatch_import, dispatch_improve, dispatch_tailor
+from app.orchestrator.resume_render import render_cover_letter_pdf, render_resume_pdf
+from app.orchestrator.workbench_jobs import (
+    dispatch_cover_letter,
+    dispatch_import,
+    dispatch_improve,
+    dispatch_tailor,
+)
 
 router = APIRouter(tags=["workbench"])
 
@@ -260,7 +267,23 @@ async def application_detail(
         .where(TailoredResume.application_id == application_id)
         .order_by(desc(TailoredResume.version))
     )).scalars().all())
+    cover_letters = list((await session.execute(
+        select(CoverLetter)
+        .where(CoverLetter.application_id == application_id)
+        .order_by(desc(CoverLetter.version))
+    )).scalars().all())
     latest_job = await _latest_tailor_job(session, application_id)
+    # Most recent cover letter job (any status) — surface its error if dispatch
+    # failed, or "pending" status if the worker hasn't responded yet.
+    latest_cover_job = (await session.execute(
+        select(WorkbenchJob)
+        .where(
+            WorkbenchJob.kind == WorkbenchJobKind.COVER_LETTER,
+            WorkbenchJob.input["application_id"].astext == str(application_id),
+        )
+        .order_by(desc(WorkbenchJob.created_at))
+        .limit(1)
+    )).scalars().first()
     return templates.TemplateResponse(
         request,
         "workbench_application.html",
@@ -268,8 +291,93 @@ async def application_detail(
             "user": user,
             "application": app,
             "versions": versions,
+            "cover_letters": cover_letters,
             "latest_job": latest_job,
+            "latest_cover_job": latest_cover_job,
         },
+    )
+
+
+@router.get("/workbench/applications/{application_id}/versions/{version_id}.pdf",
+            response_class=Response, response_model=None)
+async def resume_version_pdf(
+    application_id: uuid.UUID,
+    version_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Render a TailoredResume to PDF on demand. WeasyPrint is reasonably fast
+    on a single page so we don't bother caching the bytes."""
+    tailored = await session.get(TailoredResume, version_id)
+    if not tailored or tailored.application_id != application_id:
+        raise HTTPException(404, "resume version not found")
+    try:
+        pdf_bytes = await render_resume_pdf(session, tailored)
+    except Exception as exc:  # WeasyPrint native-dep miss, template error, ...
+        raise HTTPException(500, f"could not render PDF: {exc}")
+    filename = f"resume-v{tailored.version}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+# ── cover letters (W4) ─────────────────────────────────────────────
+
+
+@router.post("/workbench/applications/{application_id}/cover-letters",
+             response_class=HTMLResponse, response_model=None)
+async def create_cover_letter(
+    application_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    """Dispatch a cover letter generation job for the latest tailored resume."""
+    app = await session.get(ResumeApplication, application_id)
+    if not app:
+        raise HTTPException(404, "application not found")
+
+    job = WorkbenchJob(
+        kind=WorkbenchJobKind.COVER_LETTER,
+        status=WorkbenchJobStatus.PENDING,
+        input={"application_id": str(application_id)},
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+
+    err = await dispatch_cover_letter(job.id)
+    if err:
+        async with session.begin():
+            j = await session.get(WorkbenchJob, job.id)
+            if j:
+                j.status = WorkbenchJobStatus.ERROR
+                j.error = err
+
+    return RedirectResponse(f"/workbench/applications/{application_id}", status_code=303)
+
+
+@router.get("/workbench/applications/{application_id}/cover-letters/{letter_id}.pdf",
+            response_class=Response, response_model=None)
+async def cover_letter_pdf(
+    application_id: uuid.UUID,
+    letter_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    letter = await session.get(CoverLetter, letter_id)
+    if not letter or letter.application_id != application_id:
+        raise HTTPException(404, "cover letter not found")
+    try:
+        pdf_bytes = await render_cover_letter_pdf(session, letter)
+    except Exception as exc:
+        raise HTTPException(500, f"could not render PDF: {exc}")
+    filename = f"cover-letter-v{letter.version}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
 
 

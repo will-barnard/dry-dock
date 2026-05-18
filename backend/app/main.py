@@ -50,6 +50,7 @@ _INLINE_MIGRATIONS: tuple[str, ...] = (
 # SQLAlchemy stores enum members by NAME (uppercase), so these must match.
 _ENUM_MIGRATIONS: tuple[str, ...] = (
     "ALTER TYPE task_kind ADD VALUE IF NOT EXISTS 'VALIDATE'",
+    "ALTER TYPE workbench_job_kind ADD VALUE IF NOT EXISTS 'COVER_LETTER'",
 )
 
 

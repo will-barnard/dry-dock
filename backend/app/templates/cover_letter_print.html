@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cover letter — {{ profile.full_name }}</title>
+<style>
+  @page { size: Letter; margin: 0.9in 0.9in; }
+  body {
+    font-family: "Helvetica", "Arial", "DejaVu Sans", sans-serif;
+    color: #111;
+    font-size: 11pt;
+    line-height: 1.5;
+    margin: 0;
+  }
+  .header {
+    text-align: right;
+    font-size: 10pt;
+    color: #333;
+    margin-bottom: 18pt;
+  }
+  .header .name { font-weight: 700; color: #111; font-size: 11pt; }
+  .header .sep { padding: 0 3pt; color: #888; }
+  p { margin: 0 0 10pt 0; text-align: justify; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="name">{{ profile.full_name }}</div>
+  {%- for c in profile.contacts %}{{ c }}{% if not loop.last %}<span class="sep">·</span>{% endif %}{% endfor -%}
+  {%- if profile.contacts and profile.links %}<span class="sep">·</span>{% endif -%}
+  {%- for label, url in profile.links %}<a href="{{ url }}">{{ label }}</a>{% if not loop.last %}<span class="sep">·</span>{% endif %}{% endfor -%}
+</div>
+
+{# The model emits the letter body as prose with paragraph breaks. Split on
+   blank lines and wrap each into a <p> so spacing renders consistently. #}
+{% for para in body.split('\n\n') -%}
+  {%- set t = para.strip() -%}
+  {%- if t %}<p>{{ t }}</p>{% endif -%}
+{%- endfor %}
+
+</body>
+</html>

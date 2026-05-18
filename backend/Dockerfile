@@ -1,10 +1,17 @@
 FROM python:3.12-slim
 
 # git is needed by the orchestrator's git service.
+# The libpango/libharfbuzz/fontconfig packages are WeasyPrint's runtime deps,
+# used to render the Workbench's PDF resumes & cover letters.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         ca-certificates \
         curl \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        libharfbuzz0b \
+        fontconfig \
+        fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

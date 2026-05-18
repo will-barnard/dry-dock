@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import SessionLocal
 from app.models import (
+    CoverLetter,
     CVBullet,
     CVEntry,
     CVEntryKind,
@@ -729,6 +730,214 @@ async def _assemble_resume(
         "rationale": str(selection.get("rationale") or "").strip(),
     }
     return markdown, validated
+
+
+# ════════════════════════ cover letter (W4) ═════════════════════════
+#
+# Drafts a cover letter for an application. The model receives the candidate's
+# profile, the job description, and (if available) the highlights from the
+# most recent TailoredResume so the letter mirrors what's on the resume. Like
+# every other Workbench job, it rides the workbench_request / workbench_result
+# protocol — non-streaming, one inference, structured result handler.
+
+
+_COVER_LETTER_SYSTEM = """\
+You draft cover letters. Output ONE cover letter for the job described below.
+
+Style:
+  - 3-4 paragraphs, roughly 250-350 words total.
+  - Open with a brief hook tied to the role / company.
+  - Middle paragraphs map specific experience (from the candidate's resume
+    highlights below) to what the job description asks for. Stay strictly
+    truthful — do not invent results, technologies, or scope.
+  - Close with a clear, polite call-to-action.
+  - Address "Dear Hiring Manager," unless the JD names someone.
+  - Sign off with the candidate's name (no contact block — the PDF template
+    adds the header).
+  - Output ONLY the letter body. Markdown for paragraph breaks (blank lines).
+  - No prose around the letter, no preface, no JSON, no code fences.
+"""
+
+
+def _highlights_from_tailored(tailored: TailoredResume | None) -> list[str]:
+    """Pull the (already-rephrased) bullet texts out of the latest tailored
+    resume's selection so the cover letter can echo what's actually on the
+    resume the user will send. Returns the bullets as plain strings."""
+    if not tailored or not tailored.selection:
+        return []
+    out: list[str] = []
+    for e in tailored.selection.get("entries") or []:
+        if not isinstance(e, dict):
+            continue
+        for b in e.get("bullets") or []:
+            if not isinstance(b, dict):
+                continue
+            rephrased = b.get("rephrased")
+            if rephrased and str(rephrased).strip():
+                out.append(str(rephrased).strip())
+    return out
+
+
+def build_cover_letter_messages(
+    full_name: str,
+    headline: str | None,
+    summary_text: str | None,
+    highlights: list[str],
+    job_description: str,
+    company: str | None,
+    role_title: str | None,
+) -> list[dict[str, str]]:
+    candidate_block = f"Name: {full_name or '(unspecified)'}"
+    if headline:
+        candidate_block += f"\nHeadline: {headline}"
+    if summary_text:
+        candidate_block += f"\nSummary: {summary_text}"
+
+    target_block = ""
+    if company or role_title:
+        target_block = (
+            f"Company: {company or '(unspecified)'}\n"
+            f"Role: {role_title or '(unspecified)'}\n"
+        )
+
+    if highlights:
+        h_block = "\n".join(f"- {h}" for h in highlights)
+    else:
+        h_block = "(no tailored highlights — derive from the JD and candidate profile)"
+
+    user = (
+        f"## Candidate\n{candidate_block}\n\n"
+        f"## Target\n{target_block}\n"
+        f"## Resume highlights to echo (truthful only)\n{h_block}\n\n"
+        f"## Job description\n{job_description}\n\n"
+        f"## Task\nWrite the cover letter per the rules. Output only the body."
+    )
+    return [
+        {"role": "system", "content": _COVER_LETTER_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+async def dispatch_cover_letter(job_id: uuid.UUID) -> str | None:
+    """Build the cover-letter prompt for an application and send it to a worker."""
+    async with SessionLocal() as session:
+        job = await session.get(WorkbenchJob, job_id)
+        if not job:
+            return "job not found"
+        application_id = (job.input or {}).get("application_id")
+        if not application_id:
+            return "job has no application_id"
+        try:
+            app = await session.get(ResumeApplication, uuid.UUID(str(application_id)))
+        except (ValueError, TypeError):
+            app = None
+        if not app:
+            return "application not found"
+        if not (app.job_description or "").strip():
+            return "the application has no job description"
+
+        profile = (await session.execute(select(CVProfile))).scalars().first()
+        full_name = profile.full_name if profile else ""
+        headline = profile.headline if profile else None
+
+        # Use a default-labelled summary variant if one exists, else any.
+        summary_row = (await session.execute(
+            select(CVSummary).order_by(CVSummary.created_at).limit(1)
+        )).scalars().first()
+        summary_text = summary_row.text if summary_row else None
+
+        # Latest TailoredResume version for this app — gives the model a list
+        # of already-tailored bullets to echo. Optional: works fine without.
+        latest = (await session.execute(
+            select(TailoredResume)
+            .where(TailoredResume.application_id == app.id)
+            .order_by(TailoredResume.version.desc())
+            .limit(1)
+        )).scalars().first()
+        highlights = _highlights_from_tailored(latest)
+
+        messages = build_cover_letter_messages(
+            full_name=full_name, headline=headline, summary_text=summary_text,
+            highlights=highlights, job_description=app.job_description,
+            company=app.company, role_title=app.role_title,
+        )
+
+    worker = await _pick_worker(_IMPORT_POOLS)
+    if worker is None:
+        return (
+            "No worker is online in the docs / researcher / planner / coder "
+            "pools to draft the cover letter."
+        )
+
+    msg = WorkbenchRequestMsg(
+        job_id=job_id, kind="cover_letter", model=None, messages=messages,
+    )
+    try:
+        await worker.send(msg.model_dump(mode="json"))
+    except Exception as exc:
+        log.warning("workbench.cover_letter_dispatch_failed", job=str(job_id), error=str(exc))
+        return f"failed to reach worker {worker.name}: {exc}"
+
+    async with SessionLocal() as session:
+        job = await session.get(WorkbenchJob, job_id)
+        if job:
+            job.status = WorkbenchJobStatus.RUNNING
+            job.worker_name = worker.name
+            await session.commit()
+    log.info("workbench.cover_letter_dispatched", job=str(job_id), worker=worker.name)
+    return None
+
+
+async def handle_cover_letter_result(
+    job_id: uuid.UUID, success: bool, content: str, error: str | None
+) -> None:
+    """Persist the drafted letter as a new CoverLetter version on the application."""
+    async with SessionLocal() as session:
+        job = await session.get(WorkbenchJob, job_id)
+        if not job:
+            log.warning("workbench.cover_letter_result_no_job", job=str(job_id))
+            return
+        if not success:
+            job.status = WorkbenchJobStatus.ERROR
+            job.error = error or "worker reported failure"
+            await session.commit()
+            return
+
+        application_id = (job.input or {}).get("application_id")
+        try:
+            app = await session.get(ResumeApplication, uuid.UUID(str(application_id)))
+        except (ValueError, TypeError):
+            app = None
+        if app is None:
+            job.status = WorkbenchJobStatus.ERROR
+            job.error = "application no longer exists"
+            await session.commit()
+            return
+
+        body = (content or "").strip()
+        # Strip a single accidental fence wrapper that some models add.
+        if body.startswith("```") and body.endswith("```"):
+            body = "\n".join(body.split("\n")[1:-1]).strip()
+        if not body:
+            job.status = WorkbenchJobStatus.ERROR
+            job.error = "the model returned an empty letter"
+            await session.commit()
+            return
+
+        existing = (await session.execute(
+            select(CoverLetter).where(CoverLetter.application_id == app.id)
+        )).scalars().all()
+        next_version = (max((c.version for c in existing), default=0)) + 1
+        letter = CoverLetter(
+            application_id=app.id, version=next_version, body=body,
+        )
+        session.add(letter)
+        await session.flush()
+        job.status = WorkbenchJobStatus.DONE
+        job.error = None
+        job.result = {"cover_letter_id": str(letter.id), "version": next_version}
+        await session.commit()
+    log.info("workbench.cover_letter_result_applied", job=str(job_id))
 
 
 # ════════════════════════ improve (W3) ═════════════════════════════

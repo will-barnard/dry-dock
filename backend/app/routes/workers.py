@@ -59,6 +59,7 @@ from app.orchestrator.protocol import (
     WorkbenchResultMsg,
 )
 from app.orchestrator.workbench_jobs import (
+    handle_cover_letter_result,
     handle_import_result,
     handle_improve_result,
     handle_tailor_result,
@@ -424,6 +425,10 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
                     )
                 elif msg.kind == "improve":
                     await handle_improve_result(
+                        msg.job_id, msg.success, msg.content, msg.error
+                    )
+                elif msg.kind == "cover_letter":
+                    await handle_cover_letter_result(
                         msg.job_id, msg.success, msg.content, msg.error
                     )
                 else:

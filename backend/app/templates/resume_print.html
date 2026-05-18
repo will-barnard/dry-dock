@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ profile.full_name or 'Resume' }}</title>
+<style>
+  /*
+   * Print-quality resume layout — mirrors the user's reference resume:
+   * centered name, centered contact line, uppercase section headers with a
+   * thin rule, bold organization line with date right-aligned on the same
+   * row as the title, bulleted accomplishments.
+   *
+   * Sizes are in pt so WeasyPrint renders consistently regardless of viewport.
+   */
+  @page {
+    size: Letter;
+    margin: 0.55in 0.7in;
+  }
+  body {
+    font-family: "Helvetica", "Arial", "DejaVu Sans", sans-serif;
+    color: #111;
+    font-size: 10.5pt;
+    line-height: 1.35;
+    margin: 0;
+  }
+  h1.name {
+    text-align: center;
+    font-size: 20pt;
+    margin: 0 0 4pt 0;
+    font-weight: 700;
+    letter-spacing: 0.5pt;
+  }
+  .contacts {
+    text-align: center;
+    font-size: 9.5pt;
+    margin-bottom: 14pt;
+    color: #222;
+  }
+  .contacts .sep { padding: 0 4pt; color: #888; }
+  .contacts a { color: #1f4e8c; text-decoration: underline; }
+  h2.section {
+    font-size: 11pt;
+    text-transform: uppercase;
+    letter-spacing: 1pt;
+    font-weight: 700;
+    border-bottom: 0.6pt solid #333;
+    padding-bottom: 1pt;
+    margin: 12pt 0 6pt 0;
+  }
+  p { margin: 0 0 6pt 0; }
+  ul { margin: 2pt 0 6pt 14pt; padding: 0; }
+  li { margin: 0 0 1.5pt 0; }
+  /*
+   * Each entry is a small block: header row (org bold + date right), title
+   * row (bold + optional right-aligned subtitle), optional italic description,
+   * bullets. Flex on the rows so the date sits flush right of the heading.
+   */
+  .entry { margin-bottom: 7pt; page-break-inside: avoid; }
+  .entry .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12pt;
+  }
+  .entry .org { font-weight: 700; }
+  .entry .title { font-weight: 600; }
+  .entry .dates { font-size: 9.5pt; color: #444; white-space: nowrap; }
+  .entry .description { font-style: italic; font-size: 10pt; margin-top: 1pt; }
+  .skill-line { margin: 1pt 0; }
+  .skill-line .cat { font-weight: 700; }
+  .summary { text-align: justify; }
+</style>
+</head>
+<body>
+
+<h1 class="name">{{ profile.full_name }}</h1>
+{% if profile.contacts or profile.links %}
+<div class="contacts">
+  {%- set parts = profile.contacts + (profile.links | map(attribute=0) | list if profile.links else []) -%}
+  {%- for c in profile.contacts -%}
+    {{ c }}{% if not loop.last or profile.links %}<span class="sep">·</span>{% endif %}
+  {%- endfor -%}
+  {%- for label, url in profile.links -%}
+    <a href="{{ url }}">{{ label }}</a>{% if not loop.last %}<span class="sep">·</span>{% endif %}
+  {%- endfor -%}
+</div>
+{% endif %}
+
+{% if summary %}
+<h2 class="section">Summary</h2>
+<p class="summary">{{ summary }}</p>
+{% endif %}
+
+{% if skills %}
+<h2 class="section">Technical Skills</h2>
+{% for category, names in skills %}
+  <div class="skill-line">
+    <span class="cat">{{ category }}:</span> {{ names | join(', ') }}
+  </div>
+{% endfor %}
+{% endif %}
+
+{% if projects %}
+<h2 class="section">Technical Projects</h2>
+{% for e in projects %}
+  <div class="entry">
+    <div class="row">
+      <span class="org">
+        {{ e.organization }}{% if e.title %} — {{ e.title }}{% endif %}
+        {% if e.url %}<span style="font-weight: 400; color: #1f4e8c;">· {{ e.url }}</span>{% endif %}
+      </span>
+      {% if e.dates %}<span class="dates">{{ e.dates }}</span>{% endif %}
+    </div>
+    {% if e.description %}<div class="description">{{ e.description }}</div>{% endif %}
+    {% if e.bullets %}
+      <ul>
+        {% for b in e.bullets %}<li>{{ b }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+{% endfor %}
+{% endif %}
+
+{% if experience %}
+<h2 class="section">Work Experience</h2>
+{% for e in experience %}
+  <div class="entry">
+    <div class="row">
+      <span class="org">
+        {{ e.organization }}{% if e.location %} <span style="font-weight: 400; color: #444;">| {{ e.location }}</span>{% endif %}
+      </span>
+    </div>
+    <div class="row">
+      <span class="title">{{ e.title or '' }}</span>
+      {% if e.dates %}<span class="dates">{{ e.dates }}</span>{% endif %}
+    </div>
+    {% if e.description %}<div class="description">{{ e.description }}</div>{% endif %}
+    {% if e.bullets %}
+      <ul>
+        {% for b in e.bullets %}<li>{{ b }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+{% endfor %}
+{% endif %}
+
+{% if education %}
+<h2 class="section">Education</h2>
+{% for e in education %}
+  <div class="entry">
+    <div class="row">
+      <span class="org">
+        {{ e.organization }}{% if e.location %} <span style="font-weight: 400; color: #444;">| {{ e.location }}</span>{% endif %}
+      </span>
+    </div>
+    <div class="row">
+      <span class="title">{{ e.title or '' }}</span>
+      {% if e.dates %}<span class="dates">{{ e.dates }}</span>{% endif %}
+    </div>
+    {% if e.description %}<div class="description">{{ e.description }}</div>{% endif %}
+    {% if e.bullets %}
+      <ul>
+        {% for b in e.bullets %}<li>{{ b }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+{% endfor %}
+{% endif %}
+
+</body>
+</html>

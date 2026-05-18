@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}{{ application.role_title or 'Application' }} — Workbench{% endblock %}
 {% block head %}
-  {# Auto-refresh while a tailor job is in flight. ~30s typical. #}
-  {% if latest_job and latest_job.status.value in ('pending', 'running') %}
+  {# Auto-refresh while a tailor or cover-letter job is in flight. #}
+  {% if (latest_job and latest_job.status.value in ('pending', 'running'))
+        or (latest_cover_job and latest_cover_job.status.value in ('pending', 'running')) %}
     <meta http-equiv="refresh" content="4">
   {% endif %}
 {% endblock %}
@@ -100,33 +101,133 @@
                   class="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700">
             Copy Markdown
           </button>
+          <a href="/workbench/applications/{{ application.id }}/versions/{{ latest_version.id }}.pdf"
+             target="_blank"
+             class="px-2 py-1 rounded bg-slate-900 text-white hover:bg-slate-800">
+            Download PDF
+          </a>
         </div>
+      </div>
+    {% endif %}
+
+    {# ── cover letters ── #}
+    {% if versions %}
+      <div class="bg-white border border-slate-200 rounded p-4">
+        <div class="flex items-baseline justify-between">
+          <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">Cover letter</h2>
+          {% if latest_cover_job %}
+            <span class="text-[10px] px-2 py-0.5 rounded
+              {% if latest_cover_job.status.value == 'done' %}bg-emerald-100 text-emerald-700
+              {% elif latest_cover_job.status.value == 'error' %}bg-rose-100 text-rose-700
+              {% else %}bg-amber-100 text-amber-700{% endif %}">
+              last: {{ latest_cover_job.status.value }}
+            </span>
+          {% endif %}
+        </div>
+
+        {% if latest_cover_job and latest_cover_job.status.value in ('pending', 'running') %}
+          <div class="mt-2 text-sm text-amber-700 font-medium animate-pulse">
+            {{ 'Dispatching…' if latest_cover_job.status.value == 'pending' else 'Worker is writing…' }}
+          </div>
+          <p class="text-xs text-slate-500 mt-1">This page refreshes itself every few seconds.</p>
+        {% else %}
+          <form method="post" action="/workbench/applications/{{ application.id }}/cover-letters" class="mt-3">
+            <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded">
+              {% if cover_letters %}Regenerate cover letter (v{{ cover_letters[0].version + 1 }}){% else %}Generate cover letter{% endif %}
+            </button>
+            <span class="text-xs text-slate-500 ml-2">
+              Uses the latest tailored resume as input — truthful only.
+            </span>
+          </form>
+          {% if latest_cover_job and latest_cover_job.status.value == 'error' %}
+            <div class="mt-3 text-xs text-rose-700">
+              <div class="font-medium">Last generation failed:</div>
+              <pre class="log text-xs bg-rose-50 border border-rose-200 rounded p-2 mt-1">{{ latest_cover_job.error }}</pre>
+            </div>
+          {% endif %}
+        {% endif %}
+
+        {% if cover_letters %}
+          {% set latest_letter = cover_letters[0] %}
+          <div class="mt-4 pt-3 border-t border-slate-100">
+            <div class="flex items-baseline justify-between">
+              <div class="text-xs font-semibold text-slate-600">v{{ latest_letter.version }} (latest)</div>
+              <div class="text-xs text-slate-500 font-mono">{{ latest_letter.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+            </div>
+            <pre class="log text-sm whitespace-pre-wrap mt-2 p-3 bg-slate-50 border border-slate-100 rounded">{{ latest_letter.body }}</pre>
+            <textarea id="cl-{{ latest_letter.id }}" class="hidden">{{ latest_letter.body }}</textarea>
+            <div class="mt-2 flex gap-2 text-xs">
+              <button onclick="navigator.clipboard.writeText(document.getElementById('cl-{{ latest_letter.id }}').value); this.textContent='Copied ✓'; setTimeout(()=>this.textContent='Copy text', 1200);"
+                      class="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700">
+                Copy text
+              </button>
+              <a href="/workbench/applications/{{ application.id }}/cover-letters/{{ latest_letter.id }}.pdf"
+                 target="_blank"
+                 class="px-2 py-1 rounded bg-slate-900 text-white hover:bg-slate-800">
+                Download PDF
+              </a>
+            </div>
+          </div>
+        {% endif %}
       </div>
     {% endif %}
   </div>
 
   {# ── right: version history ── #}
-  <aside class="space-y-2">
-    <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">Versions</h2>
-    {% if versions %}
-      <ul class="space-y-1 text-sm">
-        {% for v in versions %}
-          <li class="bg-white border border-slate-200 rounded p-2">
-            <details>
-              <summary class="cursor-pointer">
-                <span class="font-mono">v{{ v.version }}</span>
-                <span class="text-xs text-slate-500 ml-1">{{ v.created_at.strftime('%m-%d %H:%M') }}</span>
-              </summary>
-              {% if v.rationale %}
-                <p class="text-xs text-slate-600 italic mt-2">{{ v.rationale }}</p>
-              {% endif %}
-              <pre class="log text-xs font-mono whitespace-pre-wrap mt-2 p-2 bg-slate-50 border border-slate-100 rounded max-h-96 overflow-auto">{{ v.rendered }}</pre>
-            </details>
-          </li>
-        {% endfor %}
-      </ul>
-    {% else %}
-      <div class="text-xs text-slate-400 italic">No versions yet.</div>
+  <aside class="space-y-4">
+    <div class="space-y-2">
+      <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">Resume versions</h2>
+      {% if versions %}
+        <ul class="space-y-1 text-sm">
+          {% for v in versions %}
+            <li class="bg-white border border-slate-200 rounded p-2">
+              <details>
+                <summary class="cursor-pointer flex items-center justify-between gap-2">
+                  <span>
+                    <span class="font-mono">v{{ v.version }}</span>
+                    <span class="text-xs text-slate-500 ml-1">{{ v.created_at.strftime('%m-%d %H:%M') }}</span>
+                  </span>
+                  <a href="/workbench/applications/{{ application.id }}/versions/{{ v.id }}.pdf"
+                     target="_blank"
+                     onclick="event.stopPropagation();"
+                     class="text-xs text-slate-700 underline">PDF</a>
+                </summary>
+                {% if v.rationale %}
+                  <p class="text-xs text-slate-600 italic mt-2">{{ v.rationale }}</p>
+                {% endif %}
+                <pre class="log text-xs font-mono whitespace-pre-wrap mt-2 p-2 bg-slate-50 border border-slate-100 rounded max-h-96 overflow-auto">{{ v.rendered }}</pre>
+              </details>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="text-xs text-slate-400 italic">No versions yet.</div>
+      {% endif %}
+    </div>
+
+    {% if cover_letters %}
+      <div class="space-y-2">
+        <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">Cover letter versions</h2>
+        <ul class="space-y-1 text-sm">
+          {% for cl in cover_letters %}
+            <li class="bg-white border border-slate-200 rounded p-2">
+              <details>
+                <summary class="cursor-pointer flex items-center justify-between gap-2">
+                  <span>
+                    <span class="font-mono">v{{ cl.version }}</span>
+                    <span class="text-xs text-slate-500 ml-1">{{ cl.created_at.strftime('%m-%d %H:%M') }}</span>
+                  </span>
+                  <a href="/workbench/applications/{{ application.id }}/cover-letters/{{ cl.id }}.pdf"
+                     target="_blank"
+                     onclick="event.stopPropagation();"
+                     class="text-xs text-slate-700 underline">PDF</a>
+                </summary>
+                <pre class="log text-xs whitespace-pre-wrap mt-2 p-2 bg-slate-50 border border-slate-100 rounded max-h-96 overflow-auto">{{ cl.body }}</pre>
+              </details>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
     {% endif %}
   </aside>
 </section>

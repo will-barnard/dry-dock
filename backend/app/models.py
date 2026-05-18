@@ -416,9 +416,10 @@ class CVSkill(Base):
 
 
 class WorkbenchJobKind(str, enum.Enum):
-    IMPORT = "import"     # parse a resume → incrementally merge into the library
-    TAILOR = "tailor"     # (W2) select library items for a job description
-    IMPROVE = "improve"   # (W3) rewrite a single bullet
+    IMPORT = "import"             # parse a resume → incrementally merge into the library
+    TAILOR = "tailor"             # (W2) select library items for a job description
+    IMPROVE = "improve"           # (W3) rewrite a single bullet
+    COVER_LETTER = "cover_letter" # (W4) draft a cover letter for an application
 
 
 class WorkbenchJobStatus(str, enum.Enum):
@@ -495,3 +496,19 @@ class TailoredResume(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     application: Mapped[ResumeApplication] = relationship(back_populates="versions")
+
+
+class CoverLetter(Base):
+    """A drafted cover letter for an application. Like TailoredResume, each
+    generation is a new version — the body is Markdown rendered to PDF by the
+    same WeasyPrint pipeline."""
+
+    __tablename__ = "cover_letters"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("resume_applications.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    body: Mapped[str] = mapped_column(Text, default="")  # the letter, in Markdown / plain prose
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

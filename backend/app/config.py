@@ -66,8 +66,11 @@ class Settings(BaseSettings):
     # Self-hosted SearXNG instance, expected to expose /search?format=json.
     searxng_url: str = Field(default="", alias="SEARXNG_URL")
     # How many results to feed the model per turn. More = richer context, but
-    # also more tokens (and Ollama's context window is finite).
-    web_search_max_results: int = Field(default=5, alias="WEB_SEARCH_MAX_RESULTS")
+    # also more tokens — each result's snippet is ~100-300 tokens, so 15 lands
+    # around 3-5K tokens of search context. Bump higher (30+) if your worker
+    # is configured with a 32K+ num_ctx and you want more comprehensive
+    # recall; cap lower if you're seeing the model truncate.
+    web_search_max_results: int = Field(default=15, alias="WEB_SEARCH_MAX_RESULTS")
     # Hard daily ceiling across all conversations. 0 disables the cap.
     web_search_daily_budget: int = Field(default=200, alias="WEB_SEARCH_DAILY_BUDGET")
     # Hard timeout for a single search call.

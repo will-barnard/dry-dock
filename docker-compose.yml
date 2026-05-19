@@ -37,6 +37,15 @@ services:
       REMOTE_MACHINES_JSON: ${REMOTE_MACHINES_JSON:-[]}
       DEFAULT_CODE_MODEL: qwen2.5-coder:32b
       DEFAULT_PLANNER_MODEL: qwen2.5-coder:32b
+      # Operator web search (Phase 1). Off by default — set
+      # WEB_SEARCH_ENABLED=true in the Beachhead env to flip it on. SEARXNG_URL
+      # is the in-network address of the searxng service.
+      WEB_SEARCH_ENABLED: ${WEB_SEARCH_ENABLED:-false}
+      WEB_SEARCH_BACKEND: ${WEB_SEARCH_BACKEND:-searxng}
+      SEARXNG_URL: ${SEARXNG_URL:-}
+      WEB_SEARCH_MAX_RESULTS: ${WEB_SEARCH_MAX_RESULTS:-5}
+      WEB_SEARCH_DAILY_BUDGET: ${WEB_SEARCH_DAILY_BUDGET:-200}
+      WEB_SEARCH_TIMEOUT_SECONDS: ${WEB_SEARCH_TIMEOUT_SECONDS:-5.0}
       LOG_LEVEL: INFO
     expose:
       - "8000"

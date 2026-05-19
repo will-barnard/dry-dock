@@ -4,7 +4,7 @@
 {# ── reusable: render one CV entry (job / project / education) with its
    bullets, an edit disclosure, and an add-bullet form ── #}
 {% macro entry_block(entry) %}
-  <div class="bg-white border border-slate-200 rounded p-4 space-y-3">
+  <div id="entry-{{ entry.id }}" class="bg-white border border-slate-200 rounded p-4 space-y-3 scroll-mt-4">
     <div class="flex items-baseline justify-between">
       <div>
         <span class="font-semibold">{{ entry.organization }}</span>
@@ -18,6 +18,7 @@
       </div>
       <form method="post" action="/workbench/entries/{{ entry.id }}/delete" class="m-0"
             onsubmit="return confirm('Delete this entry and all its bullets?');">
+        <input type="hidden" name="anchor" value="entries-{{ entry.kind.value }}">
         <button class="text-xs text-rose-600 hover:text-rose-800">delete</button>
       </form>
     </div>
@@ -36,6 +37,7 @@
               {% if b.tags %}<span class="text-[10px] text-slate-400 ml-1">[{{ b.tags|join(', ') }}]</span>{% endif %}
             </summary>
             <form method="post" action="/workbench/bullets/{{ b.id }}" class="mt-2 space-y-2 pl-3 border-l-2 border-slate-100">
+              <input type="hidden" name="anchor" value="entry-{{ entry.id }}">
               <textarea name="text" rows="2" class="w-full border border-slate-300 rounded px-2 py-1 text-sm">{{ b.text }}</textarea>
               <input name="tags" value="{{ b.tags|join(', ') }}" placeholder="tags, comma-separated"
                      class="w-full border border-slate-300 rounded px-2 py-1 text-xs font-mono">
@@ -62,6 +64,7 @@
 
     {# add bullet #}
     <form method="post" action="/workbench/entries/{{ entry.id }}/bullets" class="flex gap-2 items-start pt-1">
+      <input type="hidden" name="anchor" value="entry-{{ entry.id }}">
       <textarea name="text" rows="1" required placeholder="New bullet…"
                 class="flex-1 border border-slate-300 rounded px-2 py-1 text-sm"></textarea>
       <input name="tags" placeholder="tags" class="w-32 border border-slate-300 rounded px-2 py-1 text-xs font-mono">
@@ -72,6 +75,7 @@
     <details class="text-xs">
       <summary class="cursor-pointer text-slate-500">edit entry details</summary>
       <form method="post" action="/workbench/entries/{{ entry.id }}" class="mt-2 grid grid-cols-2 gap-2">
+        <input type="hidden" name="anchor" value="entry-{{ entry.id }}">
         <input name="organization" value="{{ entry.organization }}" placeholder="organization" required
                class="border border-slate-300 rounded px-2 py-1">
         <input name="title" value="{{ entry.title or '' }}" placeholder="title"
@@ -99,6 +103,7 @@
 {% macro add_entry_form(kind) %}
   <form method="post" action="/workbench/entries" class="bg-slate-50 border border-dashed border-slate-300 rounded p-3 grid grid-cols-2 gap-2 text-sm">
     <input type="hidden" name="kind" value="{{ kind }}">
+    <input type="hidden" name="anchor" value="entries-{{ kind }}">
     <input name="organization" required placeholder="organization" class="border border-slate-300 rounded px-2 py-1">
     <input name="title" placeholder="title" class="border border-slate-300 rounded px-2 py-1">
     <input name="location" placeholder="location" class="border border-slate-300 rounded px-2 py-1">
@@ -216,11 +221,39 @@
   {% endif %}
 </section>
 
-<div class="space-y-8">
+<div class="bg-white border border-slate-200 rounded">
+  {# ── tabs ─────────────────────────────────────────────────────────
+     One nav, six panels. Active tab + panel are determined client-side
+     (priority: URL fragment → localStorage → first tab) so save-and-
+     redirect via #profile / #entries-experience / #entry-<uuid> drops
+     the user back on the correct tab without server-side logic. Tabs
+     use [data-tab] / [data-tab-panel] attributes; the script at the
+     bottom of the page wires them up. #}
+  <nav class="flex flex-wrap gap-1 px-3 pt-3 border-b border-slate-200" data-tabs role="tablist">
+    {% set _tabs = [
+        ('profile',    'Profile'),
+        ('summaries',  'Summaries'),
+        ('experience', 'Experience'),
+        ('projects',   'Projects'),
+        ('education',  'Education'),
+        ('skills',     'Skills'),
+    ] %}
+    {% for slug, label in _tabs %}
+      <button type="button" data-tab="{{ slug }}" role="tab"
+              class="tab-btn px-3 py-2 text-sm font-medium text-slate-500 border-b-2 border-transparent
+                     hover:text-slate-900 hover:border-slate-300 -mb-px">
+        {{ label }}
+      </button>
+    {% endfor %}
+  </nav>
+
+  <div class="p-4">
+
   {# ── profile ── #}
-  <section>
+  <section id="profile" data-tab-panel="profile" class="scroll-mt-4" hidden>
     <h2 class="text-lg font-semibold mb-2">Profile</h2>
     <form method="post" action="/workbench/profile" class="bg-white border border-slate-200 rounded p-4 grid grid-cols-2 gap-3 text-sm">
+      <input type="hidden" name="anchor" value="profile">
       <label>full name
         <input name="full_name" value="{{ profile.full_name if profile else '' }}"
                class="w-full mt-1 border border-slate-300 rounded px-2 py-1">
@@ -258,7 +291,7 @@
   </section>
 
   {# ── summaries ── #}
-  <section>
+  <section id="summaries" data-tab-panel="summaries" class="scroll-mt-4" hidden>
     <h2 class="text-lg font-semibold mb-2">Summaries</h2>
     <div class="space-y-2">
       {% for s in summaries %}
@@ -268,6 +301,7 @@
             <p class="text-sm text-slate-700 mt-1">{{ s.text }}</p>
           </div>
           <form method="post" action="/workbench/summaries/{{ s.id }}/delete" class="m-0">
+            <input type="hidden" name="anchor" value="summaries">
             <button class="text-xs text-rose-600 hover:text-rose-800">delete</button>
           </form>
         </div>
@@ -276,6 +310,7 @@
       {% endfor %}
     </div>
     <form method="post" action="/workbench/summaries" class="mt-2 bg-slate-50 border border-dashed border-slate-300 rounded p-3 space-y-2 text-sm">
+      <input type="hidden" name="anchor" value="summaries">
       <input name="label" placeholder="label (e.g. default, leadership-focused)" value="default"
              class="border border-slate-300 rounded px-2 py-1 font-mono w-64">
       <textarea name="text" rows="3" required placeholder="Summary paragraph…"
@@ -285,7 +320,7 @@
   </section>
 
   {# ── experience ── #}
-  <section>
+  <section id="entries-experience" data-tab-panel="experience" class="scroll-mt-4" hidden>
     <h2 class="text-lg font-semibold mb-2">Work experience</h2>
     <div class="space-y-3">
       {% for e in entries_by_kind.experience %}{{ entry_block(e) }}{% endfor %}
@@ -294,7 +329,7 @@
   </section>
 
   {# ── projects ── #}
-  <section>
+  <section id="entries-project" data-tab-panel="projects" class="scroll-mt-4" hidden>
     <h2 class="text-lg font-semibold mb-2">Projects</h2>
     <div class="space-y-3">
       {% for e in entries_by_kind.project %}{{ entry_block(e) }}{% endfor %}
@@ -303,7 +338,7 @@
   </section>
 
   {# ── education ── #}
-  <section>
+  <section id="entries-education" data-tab-panel="education" class="scroll-mt-4" hidden>
     <h2 class="text-lg font-semibold mb-2">Education</h2>
     <div class="space-y-3">
       {% for e in entries_by_kind.education %}{{ entry_block(e) }}{% endfor %}
@@ -312,7 +347,7 @@
   </section>
 
   {# ── skills ── #}
-  <section>
+  <section id="skills" data-tab-panel="skills" class="scroll-mt-4" hidden>
     <h2 class="text-lg font-semibold mb-2">Skills</h2>
     <div class="space-y-2">
       {% for category, items in skills_by_category.items() %}
@@ -323,6 +358,7 @@
               <span class="inline-flex items-center gap-1 text-xs bg-slate-100 rounded px-2 py-0.5">
                 {{ s.name }}
                 <form method="post" action="/workbench/skills/{{ s.id }}/delete" class="m-0 inline">
+                  <input type="hidden" name="anchor" value="skills">
                   <button class="text-rose-500 hover:text-rose-700">&times;</button>
                 </form>
               </span>
@@ -334,10 +370,75 @@
       {% endfor %}
     </div>
     <form method="post" action="/workbench/skills" class="mt-2 bg-slate-50 border border-dashed border-slate-300 rounded p-3 flex gap-2 text-sm">
+      <input type="hidden" name="anchor" value="skills">
       <input name="category" required placeholder="category" class="border border-slate-300 rounded px-2 py-1">
       <input name="name" required placeholder="skill" class="border border-slate-300 rounded px-2 py-1">
       <button class="bg-slate-700 text-white px-3 py-1.5 rounded shrink-0">+ add skill</button>
     </form>
   </section>
-</div>
+
+  </div>{# /p-4 #}
+</div>{# /tab container #}
+
+<style>
+  /* Active-tab styling. Tailwind doesn't have a "this combo of classes" so a
+     tiny CSS rule is cleaner than toggling 4 utility classes in JS. */
+  .tab-btn.tab-active {
+    color: #0f172a;            /* slate-900 */
+    border-bottom-color: #0f172a;
+  }
+</style>
+
+<script>
+  (function () {
+    const STORAGE_KEY = 'workbench.active_tab';
+    const tabs = Array.from(document.querySelectorAll('[data-tab]'));
+    const panels = Array.from(document.querySelectorAll('[data-tab-panel]'));
+    if (!tabs.length || !panels.length) return;
+
+    function activate(name) {
+      if (!name) return;
+      let found = false;
+      panels.forEach(p => {
+        const match = p.dataset.tabPanel === name;
+        p.hidden = !match;
+        if (match) found = true;
+      });
+      if (!found) return;
+      tabs.forEach(t => t.classList.toggle('tab-active', t.dataset.tab === name));
+      try { localStorage.setItem(STORAGE_KEY, name); } catch (_) {}
+    }
+
+    // Click handler.
+    tabs.forEach(t => t.addEventListener('click', () => activate(t.dataset.tab)));
+
+    // Resolve which tab to show on load.
+    function resolveInitial() {
+      // 1. Honour URL fragment (post-save redirect lands here).
+      if (location.hash) {
+        const hashId = location.hash.slice(1);
+        const target = document.getElementById(hashId);
+        if (target) {
+          const panel = target.closest('[data-tab-panel]');
+          if (panel) return panel.dataset.tabPanel;
+        }
+      }
+      // 2. Remembered tab from a previous visit.
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored && panels.some(p => p.dataset.tabPanel === stored)) return stored;
+      } catch (_) {}
+      // 3. First tab.
+      return tabs[0] && tabs[0].dataset.tab;
+    }
+
+    activate(resolveInitial());
+
+    // Scroll the fragment target into view AFTER the tab is shown.
+    if (location.hash) {
+      const target = document.getElementById(location.hash.slice(1));
+      if (target) requestAnimationFrame(() => target.scrollIntoView({ block: 'start' }));
+    }
+  })();
+</script>
 {% endblock %}

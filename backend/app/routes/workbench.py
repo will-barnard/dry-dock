@@ -55,8 +55,17 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
-def _back() -> RedirectResponse:
-    return RedirectResponse("/workbench", status_code=303)
+def _back(anchor: str | None = None) -> RedirectResponse:
+    """Redirect back to /workbench, optionally scrolling to a fragment so the
+    user stays in the same part of the page they were editing. We sanitize the
+    anchor against a strict pattern — only the IDs we actually emit on the
+    page are accepted, everything else falls back to the page top."""
+    url = "/workbench"
+    if anchor:
+        cleaned = "".join(c for c in anchor if c.isalnum() or c in "-_")
+        if cleaned:
+            url = f"{url}#{cleaned}"
+    return RedirectResponse(url, status_code=303)
 
 
 def _parse_tags(raw: str) -> list[str]:
@@ -546,6 +555,7 @@ async def upsert_profile(
     linkedin: str = Form(""),
     github: str = Form(""),
     website: str = Form(""),
+    anchor: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
@@ -564,7 +574,7 @@ async def upsert_profile(
         if v.strip()
     }
     await session.commit()
-    return _back()
+    return _back(anchor)
 
 
 # ── summaries ──────────────────────────────────────────────────────
@@ -575,18 +585,20 @@ async def add_summary(
     request: Request,
     label: str = Form("default"),
     text: str = Form(...),
+    anchor: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
     if text.strip():
         session.add(CVSummary(label=label.strip() or "default", text=text.strip()))
         await session.commit()
-    return _back()
+    return _back(anchor)
 
 
 @router.post("/workbench/summaries/{summary_id}/delete", response_class=HTMLResponse, response_model=None)
 async def delete_summary(
     summary_id: uuid.UUID,
+    anchor: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
@@ -594,7 +606,7 @@ async def delete_summary(
     if obj:
         await session.delete(obj)
         await session.commit()
-    return _back()
+    return _back(anchor)
 
 
 # ── entries ────────────────────────────────────────────────────────
@@ -611,6 +623,7 @@ async def add_entry(
     start_date: str = Form(""),
     end_date: str = Form(""),
     description: str = Form(""),
+    anchor: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
@@ -629,7 +642,7 @@ async def add_entry(
         description=description.strip() or None,
     ))
     await session.commit()
-    return _back()
+    return _back(anchor)
 
 
 @router.post("/workbench/entries/{entry_id}", response_class=HTMLResponse, response_model=None)
@@ -643,6 +656,7 @@ async def edit_entry(
     end_date: str = Form(""),
     description: str = Form(""),
     active: bool = Form(False),
+    anchor: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
@@ -658,12 +672,13 @@ async def edit_entry(
     entry.description = description.strip() or None
     entry.active = active
     await session.commit()
-    return _back()
+    return _back(anchor)
 
 
 @router.post("/workbench/entries/{entry_id}/delete", response_class=HTMLResponse, response_model=None)
 async def delete_entry(
     entry_id: uuid.UUID,
+    anchor: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
@@ -671,7 +686,7 @@ async def delete_entry(
     if entry:
         await session.delete(entry)  # cascades to bullets
         await session.commit()
-    return _back()
+    return _back(anchor)
 
 
 # ── bullets ────────────────────────────────────────────────────────
@@ -682,6 +697,7 @@ async def add_bullet(
     entry_id: uuid.UUID,
     text: str = Form(...),
     tags: str = Form(""),
+    anchor: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
@@ -695,7 +711,7 @@ async def add_bullet(
             tags=_parse_tags(tags),
         ))
         await session.commit()
-    return _back()
+    return _back(anchor)
 
 
 @router.post("/workbench/bullets/{bullet_id}", response_class=HTMLResponse, response_model=None)
@@ -704,6 +720,7 @@ async def edit_bullet(
     text: str = Form(...),
     tags: str = Form(""),
     active: bool = Form(False),
+    anchor: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
@@ -714,12 +731,13 @@ async def edit_bullet(
     bullet.tags = _parse_tags(tags)
     bullet.active = active
     await session.commit()
-    return _back()
+    return _back(anchor)
 
 
 @router.post("/workbench/bullets/{bullet_id}/delete", response_class=HTMLResponse, response_model=None)
 async def delete_bullet(
     bullet_id: uuid.UUID,
+    anchor: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
@@ -727,7 +745,7 @@ async def delete_bullet(
     if bullet:
         await session.delete(bullet)
         await session.commit()
-    return _back()
+    return _back(anchor)
 
 
 # ── skills ─────────────────────────────────────────────────────────
@@ -737,18 +755,20 @@ async def delete_bullet(
 async def add_skill(
     category: str = Form(...),
     name: str = Form(...),
+    anchor: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
     if category.strip() and name.strip():
         session.add(CVSkill(category=category.strip(), name=name.strip()))
         await session.commit()
-    return _back()
+    return _back(anchor)
 
 
 @router.post("/workbench/skills/{skill_id}/delete", response_class=HTMLResponse, response_model=None)
 async def delete_skill(
     skill_id: uuid.UUID,
+    anchor: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
@@ -756,4 +776,4 @@ async def delete_skill(
     if skill:
         await session.delete(skill)
         await session.commit()
-    return _back()
+    return _back(anchor)

@@ -228,11 +228,14 @@ async def _latest_tailor_job(
     Uses JSON ->> for the lookup since the application_id lives in the job's
     `input` blob. Postgres-only — fine, we already require PG.
     """
+    # JSON column (not JSONB), so we use the Postgres ->> operator via
+    # SQLAlchemy's .op() rather than the JSONB-only `.astext` accessor.
+    # `->>` extracts the value as text without JSON quoting.
     result = await session.execute(
         select(WorkbenchJob)
         .where(
             WorkbenchJob.kind == WorkbenchJobKind.TAILOR,
-            WorkbenchJob.input["application_id"].astext == str(application_id),
+            WorkbenchJob.input.op("->>")("application_id") == str(application_id),
         )
         .order_by(desc(WorkbenchJob.created_at))
         .limit(1)
@@ -290,7 +293,7 @@ async def application_detail(
         select(WorkbenchJob)
         .where(
             WorkbenchJob.kind == WorkbenchJobKind.COVER_LETTER,
-            WorkbenchJob.input["application_id"].astext == str(application_id),
+            WorkbenchJob.input.op("->>")("application_id") == str(application_id),
         )
         .order_by(desc(WorkbenchJob.created_at))
         .limit(1)

@@ -28,12 +28,50 @@
           <pre class="log text-sm">{{ m.content }}</pre>
         </div>
       </div>
-    {% else %}
+    {% elif m.role.value == 'tool' and m.tool_name == 'web_search' %}
+      {# Audit-trail card for one web search run by the orchestrator. #}
+      {% set results = (m.tool_payload or {}).get('results', []) %}
+      <div class="flex justify-start">
+        <details class="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 max-w-2xl w-full text-sm">
+          <summary class="cursor-pointer flex items-center gap-2 text-slate-600">
+            <span>🌐</span>
+            {% if (m.tool_payload or {}).get('ok') %}
+              <span>Searched the web · {{ results|length }} result{{ '' if results|length == 1 else 's' }}</span>
+              {% if (m.tool_payload or {}).get('elapsed_ms') is not none %}
+                <span class="text-xs text-slate-400">({{ m.tool_payload.elapsed_ms }} ms)</span>
+              {% endif %}
+            {% else %}
+              <span class="text-rose-600">Web search unavailable</span>
+            {% endif %}
+            <span class="text-xs text-slate-400 ml-auto font-mono truncate max-w-xs"
+                  title="{{ (m.tool_payload or {}).get('query', '') }}">
+              "{{ (m.tool_payload or {}).get('query', '') }}"
+            </span>
+          </summary>
+          {% if results %}
+            <ol class="mt-2 space-y-2">
+              {% for r in results %}
+                <li class="border-l-2 border-slate-200 pl-2">
+                  <a href="{{ r.url }}" target="_blank" rel="noopener noreferrer"
+                     class="font-medium text-slate-800 hover:underline">{{ r.title }}</a>
+                  <div class="text-[11px] text-slate-500 font-mono break-all">{{ r.url }}</div>
+                  {% if r.snippet %}
+                    <div class="text-xs text-slate-600 mt-0.5">{{ r.snippet }}</div>
+                  {% endif %}
+                </li>
+              {% endfor %}
+            </ol>
+          {% endif %}
+        </details>
+      </div>
+    {% elif m.role.value == 'assistant' %}
       <div class="flex justify-start">
         <div class="bg-white border border-slate-200 rounded-lg px-3 py-2 max-w-2xl w-full">
           <div class="text-[10px] uppercase tracking-wide text-slate-400 mb-1">
             assistant{% if m.worker_name %} · {{ m.worker_name }}{% endif %}
           </div>
+          {# tool_status badge for in-flight searches; SSE replaces this. #}
+          <div id="tool-{{ m.id }}" class="hidden text-xs text-slate-500 mb-1"></div>
           <pre id="msg-{{ m.id }}" class="log text-sm">{{ m.content }}</pre>
           {% if not m.complete %}
             <span id="think-{{ m.id }}" class="text-xs text-slate-400 italic animate-pulse">thinking…</span>
@@ -49,12 +87,39 @@
   {% endfor %}
 </div>
 
-<form id="chat-form" method="post" action="/operator/conversations/{{ conversation.id }}/messages"
-      class="bg-white border border-slate-200 rounded p-3 flex gap-2 items-end sticky bottom-4">
-  <textarea id="chat-input" name="content" required rows="1" placeholder="Message the {{ conversation.pool }} pool…"
-            class="flex-1 border border-slate-300 rounded px-2 py-1.5 text-base sm:text-sm resize-none overflow-hidden"></textarea>
-  <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded shrink-0">Send</button>
-</form>
+<div id="composer" class="bg-white border border-slate-200 rounded p-3 sticky bottom-4 scroll-mt-4">
+  <form id="chat-form" method="post" action="/operator/conversations/{{ conversation.id }}/messages"
+        class="flex gap-2 items-end">
+    <textarea id="chat-input" name="content" required rows="1" placeholder="Message the {{ conversation.pool }} pool…"
+              class="flex-1 border border-slate-300 rounded px-2 py-1.5 text-base sm:text-sm resize-none overflow-hidden"></textarea>
+    <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded shrink-0">Send</button>
+  </form>
+
+  {% if web_search_available %}
+    {# The toggle is a tiny separate form that POSTs to the settings endpoint.
+       Splitting it out keeps the message form payload clean and means the
+       checkbox state persists immediately on click (no "save then send"). #}
+    <form id="web-search-form" method="post"
+          action="/operator/conversations/{{ conversation.id }}/settings"
+          class="mt-2 flex items-center gap-2 text-xs text-slate-500">
+      <label class="inline-flex items-center gap-1.5 cursor-pointer">
+        <input type="checkbox" name="web_search_enabled" value="1"
+               {% if conversation.web_search_enabled %}checked{% endif %}
+               onchange="this.form.submit()">
+        Search the web for this answer
+      </label>
+      <span class="text-slate-400">·</span>
+      <span class="font-mono text-[11px]">
+        {{ web_search_backend }}
+        {% if web_search_daily_budget > 0 %}
+          · {{ web_search_usage_today }} / {{ web_search_daily_budget }} today
+        {% else %}
+          · {{ web_search_usage_today }} today
+        {% endif %}
+      </span>
+    </form>
+  {% endif %}
+</div>
 <p class="text-xs text-slate-400 mt-1">Enter to send · Shift+Enter for new line.</p>
 
 <button id="scroll-btn"
@@ -127,6 +192,31 @@
         t.textContent = "⚠ " + d.error;
         t.classList.remove("animate-pulse", "text-slate-400", "italic");
         t.classList.add("text-rose-600");
+      }
+      updateScrollBtn();
+    });
+
+    // Web search progress while a turn is being prepared. The server emits
+    // two events: `searching` (before the search) and `done` (after). We
+    // render a small pill above the streaming text. The TOOL message
+    // itself is persisted server-side and will show up in the transcript
+    // on the next page load.
+    es.addEventListener("tool_status", function (e) {
+      const d = JSON.parse(e.data);
+      const el = document.getElementById("tool-" + d.assistant_message_id);
+      if (!el) return;
+      el.classList.remove("hidden");
+      if (d.phase === "searching") {
+        el.textContent = "🌐 Searching: \"" + (d.query || "") + "\"";
+        el.classList.add("animate-pulse");
+      } else if (d.phase === "done") {
+        el.classList.remove("animate-pulse");
+        if (d.ok) {
+          el.textContent = "🌐 Searched: " + (d.result_count || 0) +
+            " result" + (d.result_count === 1 ? "" : "s");
+        } else {
+          el.textContent = "🌐 Search unavailable — answering from model knowledge";
+        }
       }
       updateScrollBtn();
     });

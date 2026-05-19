@@ -21,11 +21,13 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
+from app.config import get_settings
 from app.db import get_session
 from app.models import Conversation, ConversationMessage, MessageRole, User
 from app.orchestrator.chat import dispatch_turn
 from app.orchestrator.pools import KNOWN_POOLS
 from app.orchestrator.registry import registry
+from app.orchestrator import web_search
 
 router = APIRouter(tags=["operator"])
 
@@ -101,10 +103,51 @@ async def conversation_thread(
         .where(ConversationMessage.conversation_id == conversation_id)
         .order_by(ConversationMessage.created_at.asc())
     )).scalars().all())
+    # Web search runtime status — the template uses this to decide whether
+    # to show the composer checkbox and what to display next to it.
+    settings = get_settings()
+    web_search_available = web_search.get_provider() is not None
+    web_search_usage_today = (
+        await web_search.get_usage_today() if web_search_available else 0
+    )
     return templates.TemplateResponse(
         request,
         "operator_thread.html",
-        {"user": user, "conversation": convo, "messages": messages},
+        {
+            "user": user,
+            "conversation": convo,
+            "messages": messages,
+            "web_search_available": web_search_available,
+            "web_search_usage_today": web_search_usage_today,
+            "web_search_daily_budget": settings.web_search_daily_budget,
+            "web_search_backend": settings.web_search_backend,
+        },
+    )
+
+
+@router.post(
+    "/operator/conversations/{conversation_id}/settings",
+    response_class=HTMLResponse, response_model=None,
+)
+async def update_conversation_settings(
+    conversation_id: uuid.UUID,
+    web_search_enabled: str = Form(""),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    """Toggle per-conversation settings. Currently just the web-search flag.
+    Posted from the composer checkbox — see operator_thread.html.
+
+    Form values: HTML checkboxes only POST when checked, so we treat any
+    non-empty value as `True` and absence as `False`.
+    """
+    convo = await session.get(Conversation, conversation_id)
+    if not convo:
+        raise HTTPException(404, "conversation not found")
+    convo.web_search_enabled = bool(web_search_enabled.strip())
+    await session.commit()
+    return RedirectResponse(
+        f"/operator/conversations/{conversation_id}#composer", status_code=303
     )
 
 
@@ -150,11 +193,14 @@ async def post_message(
     history: list[dict[str, str]] = []
     if convo.system_prompt:
         history.append({"role": "system", "content": convo.system_prompt})
+    # User + system rows only. TOOL rows are audit-trail UI metadata in
+    # Phase 1 — the search results are folded into the prompt fresh each
+    # turn inside dispatch_turn, never replayed from history.
     prior = list((await session.execute(
         select(ConversationMessage)
         .where(
             ConversationMessage.conversation_id == conversation_id,
-            ConversationMessage.role != MessageRole.ASSISTANT,
+            ConversationMessage.role.in_([MessageRole.USER, MessageRole.SYSTEM]),
         )
         .order_by(ConversationMessage.created_at.asc())
     )).scalars().all())

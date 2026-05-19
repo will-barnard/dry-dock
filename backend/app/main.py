@@ -44,6 +44,10 @@ _INLINE_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE runs    ADD COLUMN IF NOT EXISTS model_used  VARCHAR(128)",
     "ALTER TABLE projects ADD COLUMN IF NOT EXISTS direct_push BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE projects ADD COLUMN IF NOT EXISTS validate_commands JSON DEFAULT '[]'::json",
+    # Operator web search (Phase 1)
+    "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS web_search_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS tool_name VARCHAR(64)",
+    "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS tool_payload JSON",
 )
 
 # ALTER TYPE … ADD VALUE cannot run inside a transaction block in PostgreSQL.
@@ -53,6 +57,7 @@ _INLINE_MIGRATIONS: tuple[str, ...] = (
 _ENUM_MIGRATIONS: tuple[str, ...] = (
     "ALTER TYPE task_kind ADD VALUE IF NOT EXISTS 'VALIDATE'",
     "ALTER TYPE workbench_job_kind ADD VALUE IF NOT EXISTS 'COVER_LETTER'",
+    "ALTER TYPE message_role ADD VALUE IF NOT EXISTS 'TOOL'",
 )
 
 

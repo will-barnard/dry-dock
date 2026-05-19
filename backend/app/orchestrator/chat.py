@@ -23,10 +23,11 @@ import uuid
 import structlog
 
 from app.db import SessionLocal
-from app.models import Conversation, ConversationMessage
+from app.models import Conversation, ConversationMessage, MessageRole
 from app.orchestrator.event_bus import bus
 from app.orchestrator.protocol import ChatRequestMsg
 from app.orchestrator.registry import registry
+from app.orchestrator import web_search
 
 log = structlog.get_logger()
 
@@ -37,6 +38,78 @@ _accumulators: dict[uuid.UUID, str] = {}
 # How many recent messages to feed the model. Keeps context bounded without a
 # summarization pass (that's a v2 refinement).
 _MAX_HISTORY = 20
+
+
+async def _run_web_search_for_turn(
+    conversation: Conversation,
+    assistant_message_id: uuid.UUID,
+    user_query: str,
+) -> str | None:
+    """Run a web search before this turn's inference and persist the result
+    as a TOOL-role message. Returns a system-message payload to inject into
+    the model's prompt, or None if the search produced nothing useful
+    (budget exhausted / backend down / zero results — every failure mode
+    degrades to "answer from your own knowledge").
+
+    Publishes `tool_status` events on the conversation topic so the browser
+    can render a live "🌐 Searching: …" badge while the call is in flight.
+
+    If the feature is globally off (no provider configured) we return None
+    silently — no transcript row, no events. Per-conversation flags can
+    linger from earlier sessions and we don't want to spam the thread.
+    """
+    if web_search.get_provider() is None:
+        return None
+
+    # Pre-flight: tell the UI we're searching.
+    await bus.publish(
+        bus.conversation_topic(conversation.id),
+        {
+            "type": "tool_status",
+            "assistant_message_id": str(assistant_message_id),
+            "phase": "searching",
+            "query": user_query,
+        },
+    )
+
+    response = await web_search.search(user_query)
+
+    # Persist a TOOL row regardless of outcome — the audit trail should show
+    # that we tried even when the result was empty / errored.
+    tool_payload = {
+        "query": user_query,
+        "results": [r.model_dump() for r in response.results] if response else [],
+        "elapsed_ms": response.elapsed_ms if response else None,
+        "backend": response.backend if response else None,
+        "ok": response is not None,
+    }
+    async with SessionLocal() as session:
+        async with session.begin():
+            session.add(ConversationMessage(
+                conversation_id=conversation.id,
+                role=MessageRole.TOOL,
+                content="",  # the structured data lives in tool_payload
+                complete=True,
+                tool_name="web_search",
+                tool_payload=tool_payload,
+            ))
+
+    # Post-flight: signal completion so the badge collapses into a summary.
+    await bus.publish(
+        bus.conversation_topic(conversation.id),
+        {
+            "type": "tool_status",
+            "assistant_message_id": str(assistant_message_id),
+            "phase": "done",
+            "query": user_query,
+            "result_count": len(response.results) if response else 0,
+            "ok": response is not None,
+        },
+    )
+
+    if response is None:
+        return None
+    return web_search.format_results_for_prompt(response)
 
 
 async def dispatch_turn(
@@ -54,6 +127,36 @@ async def dispatch_turn(
     # answers (Ollama will just serialize the inference).
     idle = [w for w in workers if w.current_task_id is None]
     worker = (idle or workers)[0]
+
+    # ── Web search (Phase 1: pre-flight injection) ──────────────────
+    # When the conversation has the toggle on, run a search against the
+    # latest user message and prepend a synthetic system message with the
+    # results. The model gets it as fresh context; no protocol changes
+    # needed and any local model works.
+    if conversation.web_search_enabled:
+        latest_user = next(
+            (m["content"] for m in reversed(history)
+             if m.get("role") == "user" and m.get("content")),
+            None,
+        )
+        if latest_user:
+            injection = await _run_web_search_for_turn(
+                conversation, assistant_message_id, latest_user.strip()
+            )
+            if injection:
+                # Slip the system message in just BEFORE the latest user turn
+                # so the model treats it as relevant context for that
+                # question, not generic guidance.
+                insert_at = len(history) - 1
+                # Walk back past trailing assistant rows (defensive — shouldn't
+                # happen because we just added a user message, but cheap).
+                while insert_at > 0 and history[insert_at].get("role") != "user":
+                    insert_at -= 1
+                history = (
+                    history[:insert_at]
+                    + [{"role": "system", "content": injection}]
+                    + history[insert_at:]
+                )
 
     # Trim history to the most recent turns; always keep a leading system
     # message if there is one.

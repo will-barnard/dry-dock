@@ -56,6 +56,25 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # ── Operator web search (Phase 1) ──────────────────────────────
+    # Global on/off switch. When False the orchestrator never calls a search
+    # backend even if a conversation has the toggle on — the UI hides the
+    # checkbox entirely.
+    web_search_enabled: bool = Field(default=False, alias="WEB_SEARCH_ENABLED")
+    # Currently only "searxng" is implemented; "tavily" is planned.
+    web_search_backend: str = Field(default="searxng", alias="WEB_SEARCH_BACKEND")
+    # Self-hosted SearXNG instance, expected to expose /search?format=json.
+    searxng_url: str = Field(default="", alias="SEARXNG_URL")
+    # How many results to feed the model per turn. More = richer context, but
+    # also more tokens (and Ollama's context window is finite).
+    web_search_max_results: int = Field(default=5, alias="WEB_SEARCH_MAX_RESULTS")
+    # Hard daily ceiling across all conversations. 0 disables the cap.
+    web_search_daily_budget: int = Field(default=200, alias="WEB_SEARCH_DAILY_BUDGET")
+    # Hard timeout for a single search call.
+    web_search_timeout_seconds: float = Field(
+        default=5.0, alias="WEB_SEARCH_TIMEOUT_SECONDS"
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

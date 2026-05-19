@@ -240,6 +240,12 @@ class MessageRole(str, enum.Enum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
+    # Audit-trail row for an external action the orchestrator took on the
+    # user's behalf (web search, etc). Not sent to the model in Phase 1 —
+    # search results are injected into the prompt as a synthetic system
+    # message at dispatch time. TOOL rows exist so the transcript UI can
+    # show what was queried and what came back.
+    TOOL = "tool"
 
 
 class Conversation(Base):
@@ -255,6 +261,11 @@ class Conversation(Base):
     pool: Mapped[str] = mapped_column(String(64), default="researcher")
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # When True, every user turn first runs the user's message through the
+    # configured web search backend and the orchestrator injects the top
+    # results into the prompt as a synthetic system message. Sticky per
+    # conversation; toggled from the composer.
+    web_search_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -279,11 +290,30 @@ class ConversationMessage(Base):
     complete: Mapped[bool] = mapped_column(Boolean, default=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     worker_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # TOOL-role rows store metadata about an external call the orchestrator
+    # made: `tool_name` is e.g. "web_search", `tool_payload` is the raw
+    # structured result (list of {title, url, snippet} for searches). Null
+    # on USER/ASSISTANT/SYSTEM rows.
+    tool_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tool_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
 
     __table_args__ = (Index("ix_messages_conversation_created", "conversation_id", "created_at"),)
+
+
+class WebSearchUsage(Base):
+    """One row per calendar day, counts global web searches that day. Single-
+    user app so we don't track per-user; one row is plenty for the daily-cap
+    safety net."""
+
+    __tablename__ = "web_search_usage"
+
+    day: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True
+    )
+    count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class ApprovalGate(Base):

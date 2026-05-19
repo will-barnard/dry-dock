@@ -504,9 +504,12 @@ class ResumeApplication(Base):
     job_description: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # `lazy="selectin"` — async sessions can't do implicit lazy-load, and the
+    # workbench home iterates application.versions in the template to show the
+    # version count. Cheap eager-load via SELECT IN.
     versions: Mapped[list["TailoredResume"]] = relationship(
         back_populates="application", cascade="all, delete-orphan",
-        order_by="TailoredResume.version",
+        order_by="TailoredResume.version", lazy="selectin",
     )
 
 

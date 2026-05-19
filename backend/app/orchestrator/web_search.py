@@ -79,7 +79,13 @@ class SearXNGProvider:
             "categories": "general",
             "safesearch": "1",
         }
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        # follow_redirects: SearXNG instances behind a reverse proxy almost
+        # always 301 http → https. Without this, the first request fails and
+        # we silently degrade to "search unavailable" — surprising and
+        # invisible. Same-host redirects are safe; httpx caps the chain at 20.
+        async with httpx.AsyncClient(
+            timeout=self.timeout, follow_redirects=True
+        ) as client:
             resp = await client.get(f"{self.base_url}/search", params=params)
             resp.raise_for_status()
             payload = resp.json()

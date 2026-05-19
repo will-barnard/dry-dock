@@ -527,7 +527,10 @@ an id) and a job description. Produce a JSON selection:
   order. For a bullet you want to reword, set `rephrased` to the new text;
   otherwise set it to null and the original is used verbatim.
 - Include only entries and bullets that strengthen the application for THIS
-  job. It's fine to drop weak entries entirely.
+  job. It's fine to drop weak EXPERIENCE or PROJECT entries entirely.
+- EDUCATION entries are MANDATORY. Always include every education entry from
+  the library — they're required on every resume. For each education entry,
+  include all its bullets (you may still rephrase them as usual).
 - Give a short `rationale` explaining the overall choices.
 
 Output ONLY a single JSON object in a ```json code block:
@@ -692,11 +695,39 @@ async def _assemble_resume(
                 "bullet_id": str(real.id),
                 "rephrased": text if rephrased else None,
             })
-        if rendered_bullets:
+        # Experience / Project entries with zero rendered bullets are noise —
+        # an org name with no story to tell. Education entries are the
+        # exception: a degree row often has no bullets at all, just school +
+        # dates, and a resume still needs it.
+        if rendered_bullets or entry.kind == CVEntryKind.EDUCATION:
             entries_by_kind[entry.kind].append((entry, rendered_bullets))
             validated_entries.append({
                 "entry_id": str(entry.id), "bullets": validated_bullets,
             })
+
+    # ── server-side enforcement: education is MANDATORY ──
+    # The system prompt tells the model to always include education, but
+    # models sometimes still drop them. Force-add every active education
+    # entry from the library that the model didn't include, with ALL its
+    # bullets verbatim (no rephrases — never embellish a degree).
+    selected_entry_ids = {ve["entry_id"] for ve in validated_entries}
+    all_education = (await session.execute(
+        select(CVEntry)
+        .where(CVEntry.active.is_(True), CVEntry.kind == CVEntryKind.EDUCATION)
+        .order_by(CVEntry.created_at)
+    )).scalars().all()
+    for edu in all_education:
+        if str(edu.id) in selected_entry_ids:
+            continue
+        edu_bullets = [b.text for b in edu.bullets if b.active]
+        entries_by_kind[CVEntryKind.EDUCATION].append((edu, edu_bullets))
+        validated_entries.append({
+            "entry_id": str(edu.id),
+            "bullets": [
+                {"bullet_id": str(b.id), "rephrased": None}
+                for b in edu.bullets if b.active
+            ],
+        })
 
     _SECTION_TITLES = {
         CVEntryKind.EXPERIENCE: "Experience",
@@ -1243,3 +1274,285 @@ async def workbench_watchdog_loop(stop: "asyncio.Event") -> None:
         except _asyncio.TimeoutError:
             pass
     log.info("workbench.watchdog_stopped")
+
+
+# ════════════════════════ tag bullets ══════════════════════════════
+#
+# Sweep the CV library and assign short searchable tags to every bullet.
+# Tags feed the tailor flow — the system prompt shows the model each
+# bullet's tags alongside the text, and the model uses them as signal
+# when selecting items for a job description. New bullets imported from
+# a PDF often arrive with empty tag lists, so this batch job is the
+# fast way to retroactively label them all.
+#
+# Three modes (chosen by the route, passed through job.input):
+#   - "untagged_only"   default; touches only bullets with no tags
+#   - "merge"           extends tag lists, never replaces
+#   - "replace"         overwrites tags entirely (destructive)
+
+
+_TAG_BULLETS_SYSTEM = """\
+You assign short, searchable tags to resume bullet points. The user will
+give you a list of bullets, each with a bullet_id and the parent entry's
+organization / title for context. For each bullet, output 3-6 tags that
+capture what the bullet demonstrates.
+
+Tag rules:
+- lowercase, hyphen-separated for multi-word ("system-design", not "system design")
+- mix techs ("python", "react", "postgres"), skills ("leadership",
+  "mentoring", "debugging"), and domains ("fintech", "ml-infrastructure")
+- prefer specific over generic: "kubernetes" over "devops", "react" over
+  "frontend" (unless the bullet really is about general frontend work)
+- never include filler verbs ("worked", "helped", "used", "experience")
+- one or two tags can capture the *outcome* ("scaling", "migration",
+  "incident-response") when relevant
+
+Output ONLY a single JSON object in a ```json code block, mapping each
+bullet_id to its list of tags. Omit any bullet you genuinely can't tag
+(rather than guessing). Schema:
+
+```json
+{
+  "bullets": {
+    "<uuid>": ["python", "kubernetes", "system-design"],
+    "<uuid>": ["react", "performance", "user-research"]
+  }
+}
+```
+"""
+
+
+# Maximum number of bullets to send in a single model call. Keeps prompts
+# under most local-model context windows even with verbose bullet text.
+_TAG_BATCH_SIZE = 40
+
+# Match canonical tag form: lowercase letters / digits / hyphen. We accept a
+# few neighbouring shapes (uppercase, spaces, underscores) and normalize.
+_TAG_RE = re.compile(r"[^a-z0-9\-]+")
+
+
+def _normalize_tag(raw: str) -> str | None:
+    """Canonicalize a model-proposed tag. Returns None if nothing usable
+    remains after stripping."""
+    if not isinstance(raw, str):
+        return None
+    t = raw.strip().lower().replace(" ", "-").replace("_", "-")
+    t = _TAG_RE.sub("", t)
+    t = t.strip("-")
+    if not t or len(t) > 64:
+        return None
+    return t
+
+
+def build_tag_bullets_messages(
+    bullet_blobs: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """`bullet_blobs` is a list of {bullet_id, entry_label, text} dicts."""
+    lines = ["Bullets to tag:\n"]
+    for b in bullet_blobs:
+        lines.append(f"bullet_id={b['bullet_id']}")
+        lines.append(f"  context: {b['entry_label']}")
+        lines.append(f"  text: {b['text']}")
+        lines.append("")
+    user = (
+        "\n".join(lines)
+        + "\n## Task\nReturn the JSON object per the rules. Output only the JSON."
+    )
+    return [
+        {"role": "system", "content": _TAG_BULLETS_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+
+
+async def dispatch_tag_bullets(job_id: uuid.UUID) -> str | None:
+    """Send all (filtered) bullets to a worker for tagging.
+
+    The first call covers the first batch of up to _TAG_BATCH_SIZE bullets.
+    The result handler triggers a follow-up call for the next batch until
+    every bullet has been processed. This keeps the dispatch logic simple
+    (one outstanding model call at a time) while supporting libraries of
+    arbitrary size.
+    """
+    async with SessionLocal() as session:
+        job = await session.get(WorkbenchJob, job_id)
+        if not job:
+            return "job not found"
+        mode = (job.input or {}).get("mode") or "untagged_only"
+
+        stmt = select(CVBullet).where(CVBullet.active.is_(True))
+        if mode == "untagged_only":
+            # Postgres-specific: tags is a JSON-encoded list column. Either
+            # empty array `[]` or NULL means "no tags."
+            stmt = stmt.where(
+                (CVBullet.tags.is_(None)) | (CVBullet.tags == [])
+            )
+
+        all_bullets: list[CVBullet] = list((await session.execute(
+            stmt.order_by(CVBullet.created_at)
+        )).scalars().all())
+
+        # Bullets the prior dispatches already processed (recorded by the
+        # handler when it applies a batch).
+        processed: list[str] = list((job.input or {}).get("processed") or [])
+        processed_set = set(processed)
+        pending = [b for b in all_bullets if str(b.id) not in processed_set]
+
+        if not pending:
+            # Nothing to do — mark done.
+            job.status = WorkbenchJobStatus.DONE
+            job.result = {
+                **(job.result or {}),
+                "total": len(all_bullets),
+                "tagged": int((job.result or {}).get("tagged", 0)),
+                "skipped": int((job.result or {}).get("skipped", 0)),
+            }
+            await session.commit()
+            return None
+
+        # Take the next batch and attach entry context to each bullet.
+        batch = pending[:_TAG_BATCH_SIZE]
+        bullet_blobs: list[dict[str, str]] = []
+        for b in batch:
+            entry = await session.get(CVEntry, b.entry_id)
+            label = entry.organization if entry else "(unknown)"
+            if entry and entry.title:
+                label += f" — {entry.title}"
+            bullet_blobs.append({
+                "bullet_id": str(b.id),
+                "entry_label": label,
+                "text": b.text,
+            })
+
+        # Stash batch_ids on the job so the handler knows which bullets the
+        # incoming result corresponds to (resilient against races with new
+        # imports between dispatch and result).
+        job.input = {
+            **(job.input or {}),
+            "batch_bullet_ids": [bb["bullet_id"] for bb in bullet_blobs],
+        }
+        await session.commit()
+
+    worker = await _pick_worker(_IMPORT_POOLS)
+    if worker is None:
+        return (
+            "No worker is online in the docs / researcher / planner / coder "
+            "pools to run the tagging job."
+        )
+
+    msg = WorkbenchRequestMsg(
+        job_id=job_id, kind="tag_bullets", model=None,
+        messages=build_tag_bullets_messages(bullet_blobs),
+    )
+    try:
+        await worker.send(msg.model_dump(mode="json"))
+    except Exception as exc:
+        log.warning("workbench.tag_bullets_dispatch_failed",
+                    job=str(job_id), error=str(exc))
+        return f"failed to reach worker {worker.name}: {exc}"
+    worker.current_workbench_jobs.add(job_id)
+
+    async with SessionLocal() as session:
+        job = await session.get(WorkbenchJob, job_id)
+        if job:
+            job.status = WorkbenchJobStatus.RUNNING
+            job.worker_name = worker.name
+            await session.commit()
+    log.info("workbench.tag_bullets_dispatched",
+             job=str(job_id), worker=worker.name, batch=len(bullet_blobs))
+    return None
+
+
+async def handle_tag_bullets_result(
+    job_id: uuid.UUID, success: bool, content: str, error: str | None
+) -> None:
+    """Apply one batch of tag assignments. If more bullets are pending,
+    triggers the next dispatch."""
+    async with SessionLocal() as session:
+        job = await session.get(WorkbenchJob, job_id)
+        if not job:
+            log.warning("workbench.tag_bullets_result_no_job", job=str(job_id))
+            return
+        if not success:
+            job.status = WorkbenchJobStatus.ERROR
+            job.error = error or "worker reported failure"
+            await session.commit()
+            return
+
+        parsed = _extract_json_object(content)
+        if parsed is None:
+            job.status = WorkbenchJobStatus.ERROR
+            job.error = "could not parse JSON from the model response"
+            job.result = {**(job.result or {}), "raw": content[:8000]}
+            await session.commit()
+            return
+
+        proposed = parsed.get("bullets") if isinstance(parsed, dict) else None
+        if not isinstance(proposed, dict):
+            job.status = WorkbenchJobStatus.ERROR
+            job.error = "model JSON missing 'bullets' object"
+            await session.commit()
+            return
+
+        mode = (job.input or {}).get("mode") or "untagged_only"
+        batch_ids = list((job.input or {}).get("batch_bullet_ids") or [])
+
+        tagged_in_batch = 0
+        skipped_in_batch = 0
+        # Apply suggestions for every bullet in this batch — even if the
+        # model omitted some, we record them as processed so the loop
+        # doesn't retry them forever.
+        for bid_str in batch_ids:
+            try:
+                bid = uuid.UUID(bid_str)
+            except (ValueError, TypeError):
+                continue
+            bullet = await session.get(CVBullet, bid)
+            if bullet is None:
+                continue
+            raw_tags = proposed.get(bid_str)
+            if not isinstance(raw_tags, list) or not raw_tags:
+                skipped_in_batch += 1
+                continue
+            new_tags = [t for t in (_normalize_tag(x) for x in raw_tags) if t]
+            if not new_tags:
+                skipped_in_batch += 1
+                continue
+            if mode == "replace":
+                bullet.tags = sorted(set(new_tags))
+            elif mode == "merge":
+                bullet.tags = sorted(set((bullet.tags or []) + new_tags))
+            else:  # untagged_only
+                if not (bullet.tags or []):
+                    bullet.tags = sorted(set(new_tags))
+                else:
+                    skipped_in_batch += 1
+                    continue
+            tagged_in_batch += 1
+
+        # Roll up counters and stash the batch as processed.
+        prev_result = job.result or {}
+        prev_processed = list((job.input or {}).get("processed") or [])
+        job.result = {
+            "tagged": int(prev_result.get("tagged", 0)) + tagged_in_batch,
+            "skipped": int(prev_result.get("skipped", 0)) + skipped_in_batch,
+        }
+        job.input = {
+            **(job.input or {}),
+            "processed": prev_processed + batch_ids,
+            "batch_bullet_ids": [],
+        }
+        await session.commit()
+
+    log.info("workbench.tag_bullets_batch_applied",
+             job=str(job_id), tagged=tagged_in_batch, skipped=skipped_in_batch)
+
+    # More bullets to go? Kick the next dispatch. dispatch_tag_bullets
+    # will mark the job DONE when it finds nothing pending.
+    err = await dispatch_tag_bullets(job_id)
+    if err:
+        async with SessionLocal() as session:
+            j = await session.get(WorkbenchJob, job_id)
+            if j and j.status != WorkbenchJobStatus.DONE:
+                j.status = WorkbenchJobStatus.ERROR
+                j.error = err
+                await session.commit()

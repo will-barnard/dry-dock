@@ -121,7 +121,10 @@ async def _resume_data(session: AsyncSession, tailored: TailoredResume) -> dict:
             rendered_bullets.append(
                 str(rephrased).strip() if rephrased else real.text
             )
-        if not rendered_bullets:
+        # Education rows are allowed to print with zero bullets (just degree
+        # + school + dates). Experience / project rows without bullets are
+        # noise and get dropped.
+        if not rendered_bullets and entry.kind != CVEntryKind.EDUCATION:
             continue
         sections[entry.kind].append({
             "organization": entry.organization,

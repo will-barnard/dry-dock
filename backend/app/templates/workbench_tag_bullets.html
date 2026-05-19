@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Tag bullets — Workbench{% endblock %}
+{% block head %}
+  {# Auto-refresh while the job is still chewing through batches. #}
+  {% if job.status.value in ('pending', 'running') %}
+    <meta http-equiv="refresh" content="4">
+  {% endif %}
+{% endblock %}
+{% block content %}
+<nav class="text-sm text-slate-500 mb-4">
+  <a href="/" class="hover:underline">Modules</a> /
+  <a href="/workbench" class="hover:underline">Workbench</a> /
+  Tag bullets
+</nav>
+
+<header class="mb-4">
+  <h1 class="text-xl font-semibold">Tag bullets</h1>
+  <div class="text-xs text-slate-500 font-mono mt-1">
+    job: {{ job.id }}
+    {% if job.worker_name %} · worker: {{ job.worker_name }}{% endif %}
+    · mode: {{ (job.input or {}).get('mode', 'untagged_only') }}
+  </div>
+</header>
+
+<div class="bg-white border border-slate-200 rounded p-4 space-y-3">
+  <div class="flex items-baseline justify-between">
+    <span class="text-sm font-semibold tracking-wide uppercase text-slate-600">Status</span>
+    <span class="text-xs px-2 py-0.5 rounded
+      {% if job.status.value == 'done' %}bg-emerald-100 text-emerald-700
+      {% elif job.status.value == 'error' %}bg-rose-100 text-rose-700
+      {% else %}bg-amber-100 text-amber-700{% endif %}">
+      {{ job.status.value }}
+    </span>
+  </div>
+
+  {% if job.status.value in ('pending', 'running') %}
+    <p class="text-sm text-amber-700 font-medium animate-pulse">
+      {{ 'Dispatching…' if job.status.value == 'pending' else 'Worker is tagging…' }}
+    </p>
+    <p class="text-xs text-slate-500">
+      Processed {{ ((job.input or {}).get('processed') | length) }} bullets so far.
+      This page refreshes every few seconds.
+    </p>
+  {% elif job.status.value == 'done' %}
+    <p class="text-sm text-emerald-700">
+      Done. <strong>{{ (job.result or {}).get('tagged', 0) }}</strong> bullets tagged
+      · <strong>{{ (job.result or {}).get('skipped', 0) }}</strong> skipped.
+    </p>
+  {% elif job.status.value == 'error' %}
+    <p class="text-sm text-rose-700">⚠ {{ job.error or '(no error message)' }}</p>
+  {% endif %}
+
+  <div class="pt-2">
+    <a href="/workbench" class="text-sm text-slate-700 underline">← back to the library</a>
+  </div>
+</div>
+{% endblock %}

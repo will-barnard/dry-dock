@@ -58,6 +58,7 @@ _ENUM_MIGRATIONS: tuple[str, ...] = (
     "ALTER TYPE task_kind ADD VALUE IF NOT EXISTS 'VALIDATE'",
     "ALTER TYPE workbench_job_kind ADD VALUE IF NOT EXISTS 'COVER_LETTER'",
     "ALTER TYPE message_role ADD VALUE IF NOT EXISTS 'TOOL'",
+    "ALTER TYPE workbench_job_kind ADD VALUE IF NOT EXISTS 'TAG_BULLETS'",
 )
 
 

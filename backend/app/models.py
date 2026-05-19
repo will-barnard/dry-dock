@@ -454,6 +454,7 @@ class WorkbenchJobKind(str, enum.Enum):
     TAILOR = "tailor"             # (W2) select library items for a job description
     IMPROVE = "improve"           # (W3) rewrite a single bullet
     COVER_LETTER = "cover_letter" # (W4) draft a cover letter for an application
+    TAG_BULLETS = "tag_bullets"   # auto-assign tags to bullets across the library
 
 
 class WorkbenchJobStatus(str, enum.Enum):

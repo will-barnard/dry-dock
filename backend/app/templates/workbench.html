@@ -171,6 +171,35 @@
   </form>
 </section>
 
+{# ── library-wide tools ── #}
+<section class="mb-8 bg-white border border-slate-200 rounded p-4">
+  <h2 class="text-lg font-semibold">Library tools</h2>
+  <p class="text-sm text-slate-500 mt-1">
+    Bulk operations across your CV library. Tagging feeds the tailor model —
+    each bullet's tags are shown alongside its text when picking what to
+    include in a tailored resume.
+  </p>
+  <form method="post" action="/workbench/tag-bullets" class="mt-3 space-y-2 text-sm">
+    <div class="flex flex-wrap items-center gap-3">
+      <label class="inline-flex items-center gap-1.5">
+        <input type="radio" name="mode" value="untagged_only" checked>
+        Only bullets without tags
+      </label>
+      <label class="inline-flex items-center gap-1.5">
+        <input type="radio" name="mode" value="merge">
+        Merge into existing tags
+      </label>
+      <label class="inline-flex items-center gap-1.5">
+        <input type="radio" name="mode" value="replace">
+        Replace all tags <span class="text-xs text-rose-600">(destructive)</span>
+      </label>
+    </div>
+    <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded">
+      ✦ Tag bullets across the library
+    </button>
+  </form>
+</section>
+
 {# ── agent-powered import ── #}
 <section class="mb-8 bg-white border border-slate-200 rounded p-4">
   <h2 class="text-lg font-semibold">Import a resume</h2>

@@ -46,6 +46,7 @@ from app.orchestrator.workbench_jobs import (
     dispatch_cover_letter,
     dispatch_import,
     dispatch_improve,
+    dispatch_tag_bullets,
     dispatch_tailor,
 )
 
@@ -437,6 +438,63 @@ async def delete_application(
         await session.delete(app)  # cascades to TailoredResume rows
         await session.commit()
     return RedirectResponse("/workbench", status_code=303)
+
+
+# ── bullet improvement (W3) ────────────────────────────────────────
+
+
+# ── tag every bullet ──────────────────────────────────────────────
+
+
+@router.post("/workbench/tag-bullets", response_class=HTMLResponse, response_model=None)
+async def start_tag_bullets(
+    mode: str = Form("untagged_only"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    """Queue a job that walks every active bullet and assigns short
+    searchable tags via a worker. `mode` is one of:
+      - untagged_only (default) — touches only bullets with empty tags
+      - merge — extends existing tag lists
+      - replace — overwrites tags entirely
+    """
+    mode = (mode or "").strip().lower()
+    if mode not in ("untagged_only", "merge", "replace"):
+        mode = "untagged_only"
+
+    job = WorkbenchJob(
+        kind=WorkbenchJobKind.TAG_BULLETS,
+        status=WorkbenchJobStatus.PENDING,
+        input={"mode": mode},
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+
+    err = await dispatch_tag_bullets(job.id)
+    if err:
+        async with session.begin():
+            j = await session.get(WorkbenchJob, job.id)
+            if j:
+                j.status = WorkbenchJobStatus.ERROR
+                j.error = err
+
+    return RedirectResponse(f"/workbench/tag-bullets/{job.id}", status_code=303)
+
+
+@router.get("/workbench/tag-bullets/{job_id}", response_class=HTMLResponse, response_model=None)
+async def tag_bullets_status(
+    request: Request,
+    job_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> HTMLResponse:
+    job = await session.get(WorkbenchJob, job_id)
+    if not job or job.kind != WorkbenchJobKind.TAG_BULLETS:
+        raise HTTPException(404, "tagging job not found")
+    return templates.TemplateResponse(
+        request, "workbench_tag_bullets.html", {"user": user, "job": job},
+    )
 
 
 # ── bullet improvement (W3) ────────────────────────────────────────

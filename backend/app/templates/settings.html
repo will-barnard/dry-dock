@@ -115,4 +115,102 @@
     <li>Backend env defaults: <span class="font-mono">DEFAULT_PLANNER_MODEL</span> for the planner role; <span class="font-mono">DEFAULT_CODE_MODEL</span> for every other role.</li>
   </ol>
 </section>
+
+{% set pw_error = request.query_params.get('error') %}
+{% set pw_success = request.query_params.get('success') %}
+{% set new_token = request.query_params.get('new_token') %}
+
+<section class="mt-6 bg-white border border-slate-200 rounded p-4 space-y-3">
+  <h2 class="text-lg font-semibold">Change password</h2>
+  {% if pw_error == 'wrong_password' %}
+    <div class="text-sm text-rose-600">Current password is incorrect.</div>
+  {% elif pw_error == 'too_short' %}
+    <div class="text-sm text-rose-600">New password must be at least 10 characters.</div>
+  {% elif pw_error == 'mismatch' %}
+    <div class="text-sm text-rose-600">New passwords do not match.</div>
+  {% elif pw_success == 'password_changed' %}
+    <div class="text-sm text-emerald-600">Password updated successfully.</div>
+  {% endif %}
+  <form method="post" action="/settings/password" class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+    <label class="text-sm block">Current password
+      <input type="password" name="current_password" required autocomplete="current-password"
+             class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm">
+    </label>
+    <label class="text-sm block">New password
+      <input type="password" name="new_password" required autocomplete="new-password" minlength="10"
+             class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm">
+    </label>
+    <label class="text-sm block">Confirm new password
+      <input type="password" name="confirm_password" required autocomplete="new-password"
+             class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm">
+    </label>
+    <div class="sm:col-span-3">
+      <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded">Update password</button>
+    </div>
+  </form>
+</section>
+
+<section class="mt-6 bg-white border border-slate-200 rounded p-4 space-y-4">
+  <h2 class="text-lg font-semibold">Temporary access accounts</h2>
+  <p class="text-sm text-slate-600">
+    Create a short-lived login link valid for 12 hours. Useful for giving someone
+    temporary access without sharing your password. The link logs straight in — no password needed.
+  </p>
+
+  {% if new_token %}
+    <div class="bg-emerald-50 border border-emerald-200 rounded p-3 text-sm space-y-1">
+      <div class="font-semibold text-emerald-800">Temp account created — share this link:</div>
+      <div class="font-mono text-xs break-all text-emerald-900 select-all"
+           id="new-token-url">{{ request.url.scheme }}://{{ request.url.netloc }}/login/token/{{ new_token }}</div>
+      <button onclick="navigator.clipboard.writeText(document.getElementById('new-token-url').textContent)"
+              class="text-xs text-emerald-700 hover:underline">Copy to clipboard</button>
+    </div>
+  {% endif %}
+
+  {% if temp_accounts %}
+    <table class="w-full text-sm">
+      <thead class="text-xs uppercase tracking-wide text-slate-500 border-b border-slate-200">
+        <tr>
+          <th class="text-left py-2 px-2">Label</th>
+          <th class="text-left py-2 px-2">Expires</th>
+          <th class="text-left py-2 px-2">Status</th>
+          <th class="py-2 px-2"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in temp_accounts %}
+          <tr class="border-b border-slate-100">
+            <td class="py-2 px-2 font-medium">{{ t.name or '—' }}</td>
+            <td class="py-2 px-2 font-mono text-xs text-slate-600">
+              {{ t.token_expires_at.strftime('%Y-%m-%d %H:%M UTC') if t.token_expires_at else '—' }}
+            </td>
+            <td class="py-2 px-2">
+              {% if t.token_expires_at and t.token_expires_at < now %}
+                <span class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-500">expired</span>
+              {% else %}
+                <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">active</span>
+              {% endif %}
+            </td>
+            <td class="py-2 px-2 text-right">
+              <form method="post" action="/settings/temp-account/{{ t.id }}/delete" class="m-0 inline"
+                    onsubmit="return confirm('Revoke this temp account?');">
+                <button class="text-xs text-rose-600 hover:text-rose-800">Revoke</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="text-sm text-slate-400 italic">No temp accounts yet.</p>
+  {% endif %}
+
+  <form method="post" action="/settings/temp-account" class="flex gap-3 items-end">
+    <label class="text-sm flex-1">Label <span class="text-slate-400">(e.g. person's name)</span>
+      <input name="label" required placeholder="Alice"
+             class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm">
+    </label>
+    <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded shrink-0">Generate link</button>
+  </form>
+</section>
 {% endblock %}

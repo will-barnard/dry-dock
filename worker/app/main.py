@@ -198,8 +198,11 @@ class Worker:
         self.current_task = None
         await self.send(ClaimRequestMsg().model_dump(mode="json"))
 
-    # Bound the tool loop so a confused model can't ping-pong forever.
-    _MAX_TOOL_ITERATIONS = 6
+    # Bound the tool loop so a confused model can't ping-pong forever. Set
+    # generously: a thorough research turn is a search + several fetches +
+    # maybe a follow-up search, which adds up fast. The orchestrator's
+    # per-search budget is the real cost ceiling.
+    _MAX_TOOL_ITERATIONS = 12
 
     async def run_chat(self, req: ChatRequestMsg) -> None:
         """Answer one Operator conversation turn.

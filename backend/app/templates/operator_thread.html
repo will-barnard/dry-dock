@@ -44,6 +44,8 @@
             {% else %}
               <span class="text-rose-600">Web search unavailable</span>
             {% endif %}
+            {% set site = (m.tool_payload or {}).get('site') %}
+            {% if site %}<span class="text-[10px] bg-slate-200 text-slate-600 rounded px-1.5 py-0.5">site:{{ site }}</span>{% endif %}
             <span class="text-xs text-slate-400 ml-auto font-mono truncate max-w-xs" title="{{ q }}">"{{ q }}"</span>
           </summary>
           {% if results %}
@@ -114,7 +116,7 @@
        payload stays clean. #}
     <form id="web-mode-form" method="post"
           action="/operator/conversations/{{ conversation.id }}/settings"
-          class="mt-2 flex items-center gap-2 text-xs text-slate-500">
+          class="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
       <label class="inline-flex items-center gap-1.5">
         Web access:
         <select name="web_mode" onchange="this.form.submit()"
@@ -123,6 +125,14 @@
           <option value="search" {% if web_mode == 'search' %}selected{% endif %}>Search (any model)</option>
           <option value="tools" {% if web_mode == 'tools' %}selected{% endif %}>Tools (search + fetch)</option>
         </select>
+      </label>
+      <label class="inline-flex items-center gap-1.5">
+        Site:
+        <input type="text" name="search_site" value="{{ conversation.search_site or '' }}"
+               placeholder="any (e.g. reverb.com)"
+               onchange="this.form.submit()"
+               class="border border-slate-300 rounded px-1.5 py-0.5 text-xs font-mono w-40"
+               title="Restrict every search in this conversation to one domain. Leave blank for the whole web.">
       </label>
       <span class="text-slate-400">·</span>
       <span class="font-mono text-[11px]">

@@ -206,14 +206,39 @@ async def check_and_charge_budget() -> int:
 # ── public API: one call from chat.py ──────────────────────────────
 
 
-async def search(query: str) -> SearchResponse | None:
-    """Run one web search through the configured provider. Returns None if
-    web search is disabled, misconfigured, the budget is exhausted, or the
-    backend errored out — the caller treats every failure as "no results"
-    and proceeds without injection."""
+def normalize_site(raw: str | None) -> str | None:
+    """Reduce a user/model-supplied site to a bare host suitable for a
+    `site:` operator. 'https://www.reverb.com/marketplace?x=1' → 'reverb.com'.
+    Returns None if nothing usable remains."""
+    if not raw:
+        return None
+    host = raw.strip().lower()
+    # Strip scheme.
+    if "://" in host:
+        host = host.split("://", 1)[1]
+    # Strip path / query / port.
+    host = host.split("/", 1)[0].split("?", 1)[0].split(":", 1)[0]
+    # Drop a leading www.
+    if host.startswith("www."):
+        host = host[4:]
+    # Must look like a domain (has a dot, no spaces).
+    if "." not in host or " " in host or not host:
+        return None
+    return host
+
+
+async def search(query: str, *, site: str | None = None) -> SearchResponse | None:
+    """Run one web search through the configured provider. When `site` is
+    given, scope the query to that domain via the `site:` operator. Returns
+    None if web search is disabled, misconfigured, the budget is exhausted,
+    or the backend errored out — the caller treats every failure as "no
+    results" and proceeds without injection."""
     provider = get_provider()
     if provider is None:
         return None
+
+    host = normalize_site(site)
+    effective_query = f"site:{host} {query}".strip() if host else query
 
     try:
         await check_and_charge_budget()
@@ -223,18 +248,22 @@ async def search(query: str) -> SearchResponse | None:
 
     settings = get_settings()
     try:
-        return await asyncio.wait_for(
-            provider.search(query, max_results=settings.web_search_max_results),
+        response = await asyncio.wait_for(
+            provider.search(effective_query, max_results=settings.web_search_max_results),
             timeout=settings.web_search_timeout_seconds + 1.0,
         )
+        # Report the user-facing query (without the site: prefix) so the
+        # transcript shows what was actually asked, plus the scope.
+        response.query = query
+        return response
     except asyncio.TimeoutError:
-        log.warning("web_search.timeout", query=query[:120])
+        log.warning("web_search.timeout", query=effective_query[:120])
         return None
     except httpx.HTTPError as exc:
-        log.warning("web_search.http_error", error=str(exc), query=query[:120])
+        log.warning("web_search.http_error", error=str(exc), query=effective_query[:120])
         return None
     except Exception:  # noqa: BLE001
-        log.exception("web_search.unexpected_error", query=query[:120])
+        log.exception("web_search.unexpected_error", query=effective_query[:120])
         return None
 
 

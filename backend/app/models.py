@@ -93,6 +93,9 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_temp: Mapped[bool] = mapped_column(Boolean, default=False)
+    temp_token: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -270,6 +273,10 @@ class Conversation(Base):
     #   "tools"  — Phase 2 agentic loop (web_search + fetch_url); needs a
     #              tool-capable model
     web_mode: Mapped[str] = mapped_column(String(16), default="off")
+    # Optional domain restriction. When set (e.g. "reverb.com"), every web
+    # search this conversation runs is scoped with `site:<domain>`. Applies
+    # to both search and tools modes.
+    search_site: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

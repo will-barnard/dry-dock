@@ -74,7 +74,9 @@ async def _run_web_search_for_turn(
         },
     )
 
-    response = await web_search.search(user_query)
+    response = await web_search.search(
+        user_query, site=getattr(conversation, "search_site", None)
+    )
 
     # Persist a TOOL row regardless of outcome — the audit trail should show
     # that we tried even when the result was empty / errored.
@@ -128,6 +130,15 @@ async def handle_tool_call(
     Imported lazily-ish via the tools module to avoid a chat→tools→chat
     import cycle (tools imports web_search/web_fetch only)."""
     from app.orchestrator.tools import run_tool
+
+    # Enforce a conversation-level site restriction on searches. The hard
+    # limit wins over whatever the model passed (or didn't) in `site`.
+    if name == "web_search":
+        async with SessionLocal() as session:
+            convo = await session.get(Conversation, conversation_id)
+        convo_site = getattr(convo, "search_site", None) if convo else None
+        if convo_site:
+            arguments = {**arguments, "site": convo_site}
 
     # Phase: started — drives the "🔧 web_search: …" badge.
     await bus.publish(

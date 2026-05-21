@@ -8,6 +8,7 @@ import structlog
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import (
@@ -133,3 +134,25 @@ async def login_submit(
 async def logout(request: Request) -> RedirectResponse:
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
+
+
+# ── /login/token: temp-account token login ────────────────────────
+
+
+@router.get("/login/token/{token}", response_model=None)
+async def token_login(
+    token: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    result = await session.execute(select(User).where(User.temp_token == token))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_temp:
+        return RedirectResponse("/login", status_code=303)
+    if user.token_expires_at and user.token_expires_at < datetime.now(timezone.utc):
+        return RedirectResponse("/login?error=expired", status_code=303)
+    user.last_login_at = datetime.now(timezone.utc)
+    await session.commit()
+    request.session["user_id"] = str(user.id)
+    log.info("auth.token_login", user_id=str(user.id), name=user.name)
+    return RedirectResponse("/", status_code=303)

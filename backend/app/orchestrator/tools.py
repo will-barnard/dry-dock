@@ -49,6 +49,15 @@ WEB_SEARCH_TOOL = {
                         "query 'Ludwig Supraphonic 1970s 14x5 snare price reverb'."
                     ),
                 },
+                "site": {
+                    "type": "string",
+                    "description": (
+                        "Optional. Restrict results to a single domain, e.g. "
+                        "'reverb.com'. Use when the user wants results from a "
+                        "specific site. (A conversation-level restriction, if "
+                        "set, overrides this.)"
+                    ),
+                },
             },
             "required": ["query"],
         },
@@ -82,22 +91,32 @@ FETCH_URL_TOOL = {
 OPERATOR_TOOLS: list[dict[str, Any]] = [WEB_SEARCH_TOOL, FETCH_URL_TOOL]
 
 
-# Prepended as a system message in tools mode so the model uses the tools
-# deliberately instead of doing one lazy verbatim search. Kept short — local
-# models follow concise instructions better than long ones.
+# Prepended as a system message in tools mode. Directive about DEPTH (fetch
+# several real sources, not one snippet) and SYNTHESIS (give a concrete
+# answer, not a list of links) — the two things local models skimp on.
 TOOLS_GUIDANCE = (
-    "You have two web tools: web_search and fetch_url. When the user asks "
-    "about current facts, prices, products, news, or anything your training "
-    "data may be stale on:\n"
-    "1. Compose a focused search query from the user's INTENT — extract the "
-    "key entities and add distinguishing detail (brand, model, year, size, "
-    "the word 'price', relevant site names). Never just paste the user's "
-    "raw words.\n"
-    "2. Call web_search, read the results, then fetch_url the most promising "
-    "ones to get real page content (prices live on the page, not in snippets).\n"
-    "3. Run additional searches with different phrasings if the first is thin.\n"
-    "4. Answer from what you actually found, cite sources inline as [1], [2], "
-    "and say so plainly if the data wasn't available."
+    "You are a research assistant with two web tools: web_search and "
+    "fetch_url. Go DEEP and SYNTHESIZE — a good answer is grounded in several "
+    "real pages you actually read, and ends with a concrete conclusion, not a "
+    "list of links.\n"
+    "\n"
+    "For any question about current facts, prices, products, or news:\n"
+    "1. Compose a focused search query from the user's INTENT — key entities "
+    "plus distinguishing detail (brand, model, year, size, the word 'price', "
+    "relevant sites). Never paste the user's raw words.\n"
+    "2. web_search, then read the results.\n"
+    "3. fetch_url at least 2-3 of the most relevant results to read the actual "
+    "page. Snippets are NOT enough — prices, specs, and details live on the "
+    "page. Do NOT answer a pricing or factual question from snippets alone.\n"
+    "4. If results are thin, conflicting, or you have fewer than a couple of "
+    "solid sources, search again with different phrasing and fetch more.\n"
+    "5. Only then answer, and SYNTHESIZE rather than list links:\n"
+    "   • Price/value questions: give a RANGE (lowest, typical, highest) from "
+    "the listings you actually read, and note condition or variation.\n"
+    "   • Comparisons/recommendations: state a clear conclusion and the "
+    "reasoning behind it.\n"
+    "   • Always cite the sources you used inline as [1], [2], … and say "
+    "plainly when data wasn't available rather than guessing."
 )
 
 
@@ -111,16 +130,18 @@ async def run_tool(name: str, arguments: dict[str, Any]) -> tuple[str, dict]:
         query = str(arguments.get("query") or "").strip()
         if not query:
             return "web_search requires a non-empty 'query'.", {"error": "no query"}
-        response = await web_search.search(query)
+        site = str(arguments.get("site") or "").strip() or None
+        response = await web_search.search(query, site=site)
         if response is None:
             return (
                 "Web search is unavailable right now (disabled, over budget, "
                 "or the backend errored). Answer from your own knowledge.",
-                {"query": query, "ok": False, "results": []},
+                {"query": query, "site": site, "ok": False, "results": []},
             )
         text = web_search.format_results_for_prompt(response)
         payload = {
             "query": query,
+            "site": site,
             "ok": True,
             "results": [r.model_dump() for r in response.results],
             "elapsed_ms": response.elapsed_ms,

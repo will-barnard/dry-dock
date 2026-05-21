@@ -52,6 +52,11 @@ _INLINE_MIGRATIONS: tuple[str, ...] = (
     # legacy boolean so existing "search on" conversations keep working.
     "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS web_mode VARCHAR(16) NOT NULL DEFAULT 'off'",
     "UPDATE conversations SET web_mode = 'search' WHERE web_search_enabled = TRUE AND web_mode = 'off'",
+    "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS search_site VARCHAR(255)",
+    # Temp accounts (12-hour token login)
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_temp BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS temp_token VARCHAR(64)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMP WITH TIME ZONE",
 )
 
 # ALTER TYPE … ADD VALUE cannot run inside a transaction block in PostgreSQL.

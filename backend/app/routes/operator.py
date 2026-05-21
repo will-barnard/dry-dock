@@ -139,11 +139,13 @@ _VALID_WEB_MODES = ("off", "search", "tools")
 async def update_conversation_settings(
     conversation_id: uuid.UUID,
     web_mode: str = Form("off"),
+    search_site: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
-    """Set the per-conversation web access mode (off / search / tools).
-    Posted from the composer's mode selector — see operator_thread.html."""
+    """Set the per-conversation web access mode (off / search / tools) and an
+    optional single-site restriction. Posted from the composer's controls —
+    see operator_thread.html."""
     convo = await session.get(Conversation, conversation_id)
     if not convo:
         raise HTTPException(404, "conversation not found")
@@ -153,6 +155,8 @@ async def update_conversation_settings(
     convo.web_mode = mode
     # Keep the legacy boolean roughly in sync for any old code paths.
     convo.web_search_enabled = mode in ("search", "tools")
+    # Normalize the site restriction down to a bare host (or clear it).
+    convo.search_site = web_search.normalize_site(search_site)
     await session.commit()
     return RedirectResponse(
         f"/operator/conversations/{conversation_id}#composer", status_code=303

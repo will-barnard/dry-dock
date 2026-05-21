@@ -38,7 +38,16 @@ WEB_SEARCH_TOOL = {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The search query. Be specific.",
+                    "description": (
+                        "A focused search query that YOU compose from the "
+                        "user's intent — do not just copy their message. "
+                        "Pull out the key entities, add distinguishing "
+                        "details (brand, model, year, size, 'price', site "
+                        "names), and drop conversational filler. Run multiple "
+                        "searches with different phrasings if the first is "
+                        "weak. Example: user 'what's my old Ludwig worth?' → "
+                        "query 'Ludwig Supraphonic 1970s 14x5 snare price reverb'."
+                    ),
                 },
             },
             "required": ["query"],
@@ -71,6 +80,25 @@ FETCH_URL_TOOL = {
 
 # The tool set offered in agentic mode.
 OPERATOR_TOOLS: list[dict[str, Any]] = [WEB_SEARCH_TOOL, FETCH_URL_TOOL]
+
+
+# Prepended as a system message in tools mode so the model uses the tools
+# deliberately instead of doing one lazy verbatim search. Kept short — local
+# models follow concise instructions better than long ones.
+TOOLS_GUIDANCE = (
+    "You have two web tools: web_search and fetch_url. When the user asks "
+    "about current facts, prices, products, news, or anything your training "
+    "data may be stale on:\n"
+    "1. Compose a focused search query from the user's INTENT — extract the "
+    "key entities and add distinguishing detail (brand, model, year, size, "
+    "the word 'price', relevant site names). Never just paste the user's "
+    "raw words.\n"
+    "2. Call web_search, read the results, then fetch_url the most promising "
+    "ones to get real page content (prices live on the page, not in snippets).\n"
+    "3. Run additional searches with different phrasings if the first is thin.\n"
+    "4. Answer from what you actually found, cite sources inline as [1], [2], "
+    "and say so plainly if the data wasn't available."
+)
 
 
 # ── dispatch ────────────────────────────────────────────────────────

@@ -29,7 +29,7 @@ from app.orchestrator.event_bus import bus
 from app.orchestrator.protocol import ChatRequestMsg
 from app.orchestrator.registry import registry
 from app.orchestrator import web_search
-from app.orchestrator.tools import OPERATOR_TOOLS
+from app.orchestrator.tools import OPERATOR_TOOLS, TOOLS_GUIDANCE
 
 log = structlog.get_logger()
 
@@ -232,6 +232,11 @@ async def dispatch_turn(
     # tool and replies. Only effective on tool-capable models; others simply
     # ignore the `tools` field and answer directly.
     tools = OPERATOR_TOOLS if web_mode == "tools" else None
+    if tools:
+        # Prepend tool-use guidance so the model composes thoughtful queries
+        # and chains search→fetch, rather than doing one verbatim lookup.
+        # Goes ahead of any user-set system prompt without replacing it.
+        trimmed = [{"role": "system", "content": TOOLS_GUIDANCE}] + trimmed
 
     msg = ChatRequestMsg(
         conversation_id=conversation.id,

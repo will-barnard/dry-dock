@@ -110,7 +110,10 @@ class ChatRequestMsg(BaseModel):
     conversation_id: uuid.UUID
     assistant_message_id: uuid.UUID
     model: str | None
-    messages: list[dict[str, str]]
+    # dict[str, Any] (not str) — tool-role messages carry nested tool_calls.
+    messages: list[dict[str, Any]]
+    # OpenAI-style tool schema. None / empty → plain chat (no tool loop).
+    tools: list[dict[str, Any]] | None = None
 
 
 class ChatChunkMsg(BaseModel):
@@ -118,6 +121,28 @@ class ChatChunkMsg(BaseModel):
     conversation_id: uuid.UUID
     assistant_message_id: uuid.UUID
     delta: str
+
+
+class ChatToolCallMsg(BaseModel):
+    """worker → orchestrator: the model wants to call a tool. The orchestrator
+    runs it and replies with a ChatToolResultMsg carrying the same id."""
+    type: Literal["chat_tool_call"] = "chat_tool_call"
+    conversation_id: uuid.UUID
+    assistant_message_id: uuid.UUID
+    tool_call_id: str
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatToolResultMsg(BaseModel):
+    """orchestrator → worker: result of a tool call the worker requested."""
+    type: Literal["chat_tool_result"]
+    conversation_id: uuid.UUID
+    assistant_message_id: uuid.UUID
+    tool_call_id: str
+    success: bool
+    content: str = ""
+    error: str | None = None
 
 
 class ChatDoneMsg(BaseModel):

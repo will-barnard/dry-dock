@@ -39,6 +39,7 @@ from app.orchestrator.git_service import apply_patch_and_push, open_pull_request
 from app.orchestrator.lifecycle import promote_ready_children
 from app.orchestrator.planner import materialize_plan
 from app.orchestrator.chat import (
+    handle_tool_call as chat_handle_tool_call,
     on_chunk as chat_on_chunk,
     on_done as chat_on_done,
     on_error as chat_on_error,
@@ -48,6 +49,8 @@ from app.orchestrator.protocol import (
     ChatChunkMsg,
     ChatDoneMsg,
     ChatErrorMsg,
+    ChatToolCallMsg,
+    ChatToolResultMsg,
     ClaimRequestMsg,
     ErrorMsg,
     HeartbeatMsg,
@@ -94,6 +97,7 @@ _INBOUND_BY_TYPE = {
     "chat_chunk": ChatChunkMsg,
     "chat_done": ChatDoneMsg,
     "chat_error": ChatErrorMsg,
+    "chat_tool_call": ChatToolCallMsg,
     "workbench_result": WorkbenchResultMsg,
 }
 
@@ -415,6 +419,35 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
                 await chat_on_done(msg.conversation_id, msg.assistant_message_id, msg.content)
             elif isinstance(msg, ChatErrorMsg):
                 await chat_on_error(msg.conversation_id, msg.assistant_message_id, msg.error)
+            elif isinstance(msg, ChatToolCallMsg):
+                # Agentic mode: the model requested a tool. Run it and ship
+                # the result back so the worker's loop can continue. Failures
+                # come back as success=False with an error string the model
+                # can react to rather than crashing the turn.
+                try:
+                    result = await chat_handle_tool_call(
+                        msg.conversation_id, msg.assistant_message_id,
+                        msg.tool_call_id, msg.name, msg.arguments,
+                    )
+                    reply = ChatToolResultMsg(
+                        conversation_id=msg.conversation_id,
+                        assistant_message_id=msg.assistant_message_id,
+                        tool_call_id=msg.tool_call_id,
+                        success=bool(result.get("success")),
+                        content=str(result.get("content") or ""),
+                    )
+                except Exception as exc:
+                    log.exception("worker.tool_call_failed", tool=msg.name)
+                    reply = ChatToolResultMsg(
+                        conversation_id=msg.conversation_id,
+                        assistant_message_id=msg.assistant_message_id,
+                        tool_call_id=msg.tool_call_id,
+                        success=False, content="", error=str(exc),
+                    )
+                try:
+                    await live.send(reply.model_dump(mode="json"))
+                except Exception:
+                    log.exception("worker.tool_result_send_failed")
             elif isinstance(msg, WorkbenchResultMsg):
                 # Clear in-flight tracking so the disconnect path doesn't try
                 # to fail an already-completed job if the socket drops next.

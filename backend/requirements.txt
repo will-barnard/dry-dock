@@ -16,3 +16,4 @@ bcrypt==4.2.1
 itsdangerous==2.2.0
 pypdf==5.1.0
 weasyprint==63.1
+beautifulsoup4==4.12.3

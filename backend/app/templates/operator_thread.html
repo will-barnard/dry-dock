@@ -29,24 +29,22 @@
         </div>
       </div>
     {% elif m.role.value == 'tool' and m.tool_name == 'web_search' %}
-      {# Audit-trail card for one web search run by the orchestrator. #}
+      {# Audit-trail card for one web search (Phase 1 or agentic). #}
       {% set results = (m.tool_payload or {}).get('results', []) %}
+      {% set q = (m.tool_payload or {}).get('query', '') %}
       <div class="flex justify-start">
         <details class="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 max-w-2xl w-full text-sm">
           <summary class="cursor-pointer flex items-center gap-2 text-slate-600">
-            <span>🌐</span>
+            <span>🔍</span>
             {% if (m.tool_payload or {}).get('ok') %}
-              <span>Searched the web · {{ results|length }} result{{ '' if results|length == 1 else 's' }}</span>
+              <span>Searched · {{ results|length }} result{{ '' if results|length == 1 else 's' }}</span>
               {% if (m.tool_payload or {}).get('elapsed_ms') is not none %}
                 <span class="text-xs text-slate-400">({{ m.tool_payload.elapsed_ms }} ms)</span>
               {% endif %}
             {% else %}
               <span class="text-rose-600">Web search unavailable</span>
             {% endif %}
-            <span class="text-xs text-slate-400 ml-auto font-mono truncate max-w-xs"
-                  title="{{ (m.tool_payload or {}).get('query', '') }}">
-              "{{ (m.tool_payload or {}).get('query', '') }}"
-            </span>
+            <span class="text-xs text-slate-400 ml-auto font-mono truncate max-w-xs" title="{{ q }}">"{{ q }}"</span>
           </summary>
           {% if results %}
             <ol class="mt-2 space-y-2">
@@ -63,6 +61,21 @@
             </ol>
           {% endif %}
         </details>
+      </div>
+    {% elif m.role.value == 'tool' and m.tool_name == 'fetch_url' %}
+      {# Audit-trail card for one page fetch (agentic mode). #}
+      {% set u = (m.tool_payload or {}).get('url', '') %}
+      <div class="flex justify-start">
+        <div class="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 max-w-2xl w-full text-sm
+                    flex items-center gap-2 text-slate-600">
+          <span>📄</span>
+          <span>Fetched</span>
+          <a href="{{ u }}" target="_blank" rel="noopener noreferrer"
+             class="font-mono text-[11px] text-slate-700 hover:underline truncate">{{ u }}</a>
+          {% if (m.tool_payload or {}).get('chars') %}
+            <span class="text-xs text-slate-400 ml-auto shrink-0">{{ m.tool_payload.chars }} chars</span>
+          {% endif %}
+        </div>
       </div>
     {% elif m.role.value == 'assistant' %}
       <div class="flex justify-start">
@@ -96,17 +109,20 @@
   </form>
 
   {% if web_search_available %}
-    {# The toggle is a tiny separate form that POSTs to the settings endpoint.
-       Splitting it out keeps the message form payload clean and means the
-       checkbox state persists immediately on click (no "save then send"). #}
-    <form id="web-search-form" method="post"
+    {# Web access mode selector. A tiny separate form so the choice persists
+       immediately on change (no "save then send"), and the message form
+       payload stays clean. #}
+    <form id="web-mode-form" method="post"
           action="/operator/conversations/{{ conversation.id }}/settings"
           class="mt-2 flex items-center gap-2 text-xs text-slate-500">
-      <label class="inline-flex items-center gap-1.5 cursor-pointer">
-        <input type="checkbox" name="web_search_enabled" value="1"
-               {% if conversation.web_search_enabled %}checked{% endif %}
-               onchange="this.form.submit()">
-        Search the web for this answer
+      <label class="inline-flex items-center gap-1.5">
+        Web access:
+        <select name="web_mode" onchange="this.form.submit()"
+                class="border border-slate-300 rounded px-1.5 py-0.5 text-xs">
+          <option value="off" {% if web_mode == 'off' %}selected{% endif %}>Off</option>
+          <option value="search" {% if web_mode == 'search' %}selected{% endif %}>Search (any model)</option>
+          <option value="tools" {% if web_mode == 'tools' %}selected{% endif %}>Tools (search + fetch)</option>
+        </select>
       </label>
       <span class="text-slate-400">·</span>
       <span class="font-mono text-[11px]">
@@ -117,6 +133,9 @@
           · {{ web_search_usage_today }} today
         {% endif %}
       </span>
+      {% if web_mode == 'tools' %}
+        <span class="text-[11px] text-amber-600">needs a tool-capable model (Qwen 2.5 / Llama 3.1)</span>
+      {% endif %}
     </form>
   {% endif %}
 </div>
@@ -206,17 +225,28 @@
       const el = document.getElementById("tool-" + d.assistant_message_id);
       if (!el) return;
       el.classList.remove("hidden");
+      // Phase 1 search-mode phases:
       if (d.phase === "searching") {
-        el.textContent = "🌐 Searching: \"" + (d.query || "") + "\"";
+        el.textContent = "🔍 Searching: \"" + (d.query || "") + "\"";
         el.classList.add("animate-pulse");
       } else if (d.phase === "done") {
         el.classList.remove("animate-pulse");
-        if (d.ok) {
-          el.textContent = "🌐 Searched: " + (d.result_count || 0) +
-            " result" + (d.result_count === 1 ? "" : "s");
-        } else {
-          el.textContent = "🌐 Search unavailable — answering from model knowledge";
-        }
+        el.textContent = d.ok
+          ? "🔍 Searched: " + (d.result_count || 0) + " result" + (d.result_count === 1 ? "" : "s")
+          : "🔍 Search unavailable — answering from model knowledge";
+      // Phase 2 agentic tool phases:
+      } else if (d.phase === "tool_start") {
+        const arg = d.arguments || {};
+        const detail = arg.query ? ("\"" + arg.query + "\"") : (arg.url || "");
+        const icon = d.tool === "fetch_url" ? "📄" : "🔍";
+        const verb = d.tool === "fetch_url" ? "Fetching" : "Searching";
+        el.textContent = icon + " " + verb + ": " + detail;
+        el.classList.add("animate-pulse");
+      } else if (d.phase === "tool_done") {
+        el.classList.remove("animate-pulse");
+        const icon = d.tool === "fetch_url" ? "📄" : "🔍";
+        const verb = d.tool === "fetch_url" ? "Fetched" : "Searched";
+        el.textContent = icon + " " + verb + " — working…";
       }
       updateScrollBtn();
     });

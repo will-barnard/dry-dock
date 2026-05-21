@@ -103,12 +103,15 @@ async def conversation_thread(
         .where(ConversationMessage.conversation_id == conversation_id)
         .order_by(ConversationMessage.created_at.asc())
     )).scalars().all())
-    # Web search runtime status — the template uses this to decide whether
-    # to show the composer checkbox and what to display next to it.
+    # Web access runtime status — the template uses this to decide whether
+    # to show the mode selector and what to display next to it.
     settings = get_settings()
     web_search_available = web_search.get_provider() is not None
     web_search_usage_today = (
         await web_search.get_usage_today() if web_search_available else 0
+    )
+    web_mode = getattr(convo, "web_mode", None) or (
+        "search" if convo.web_search_enabled else "off"
     )
     return templates.TemplateResponse(
         request,
@@ -117,6 +120,7 @@ async def conversation_thread(
             "user": user,
             "conversation": convo,
             "messages": messages,
+            "web_mode": web_mode,
             "web_search_available": web_search_available,
             "web_search_usage_today": web_search_usage_today,
             "web_search_daily_budget": settings.web_search_daily_budget,
@@ -125,26 +129,30 @@ async def conversation_thread(
     )
 
 
+_VALID_WEB_MODES = ("off", "search", "tools")
+
+
 @router.post(
     "/operator/conversations/{conversation_id}/settings",
     response_class=HTMLResponse, response_model=None,
 )
 async def update_conversation_settings(
     conversation_id: uuid.UUID,
-    web_search_enabled: str = Form(""),
+    web_mode: str = Form("off"),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
-    """Toggle per-conversation settings. Currently just the web-search flag.
-    Posted from the composer checkbox — see operator_thread.html.
-
-    Form values: HTML checkboxes only POST when checked, so we treat any
-    non-empty value as `True` and absence as `False`.
-    """
+    """Set the per-conversation web access mode (off / search / tools).
+    Posted from the composer's mode selector — see operator_thread.html."""
     convo = await session.get(Conversation, conversation_id)
     if not convo:
         raise HTTPException(404, "conversation not found")
-    convo.web_search_enabled = bool(web_search_enabled.strip())
+    mode = (web_mode or "off").strip().lower()
+    if mode not in _VALID_WEB_MODES:
+        mode = "off"
+    convo.web_mode = mode
+    # Keep the legacy boolean roughly in sync for any old code paths.
+    convo.web_search_enabled = mode in ("search", "tools")
     await session.commit()
     return RedirectResponse(
         f"/operator/conversations/{conversation_id}#composer", status_code=303

@@ -48,6 +48,10 @@ _INLINE_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS web_search_enabled BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS tool_name VARCHAR(64)",
     "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS tool_payload JSON",
+    # Operator tool-calling (Phase 2): 3-way web mode, backfilled from the
+    # legacy boolean so existing "search on" conversations keep working.
+    "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS web_mode VARCHAR(16) NOT NULL DEFAULT 'off'",
+    "UPDATE conversations SET web_mode = 'search' WHERE web_search_enabled = TRUE AND web_mode = 'off'",
 )
 
 # ALTER TYPE … ADD VALUE cannot run inside a transaction block in PostgreSQL.

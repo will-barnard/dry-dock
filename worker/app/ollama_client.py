@@ -27,16 +27,17 @@ class InferenceProvider:
     async def chat(
         self,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         options: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
     async def chat_stream(
         self,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         options: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
@@ -60,11 +61,19 @@ class OllamaProvider(InferenceProvider):
     async def chat(
         self,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         options: dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        body = {"model": model, "messages": messages, "stream": False, "options": options or {}}
+        body: dict[str, Any] = {
+            "model": model, "messages": messages, "stream": False,
+            "options": options or {},
+        }
+        # Ollama returns message.tool_calls when tools are supplied AND the
+        # model supports tool calling. Models that don't just ignore the field.
+        if tools:
+            body["tools"] = tools
         async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10.0)) as client:
             r = await client.post(f"{self.base_url}/api/chat", json=body)
             r.raise_for_status()

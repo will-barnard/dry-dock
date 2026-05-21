@@ -19,6 +19,7 @@ sticky connection. The DB row is the durable record either way.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import structlog
 
@@ -28,6 +29,7 @@ from app.orchestrator.event_bus import bus
 from app.orchestrator.protocol import ChatRequestMsg
 from app.orchestrator.registry import registry
 from app.orchestrator import web_search
+from app.orchestrator.tools import OPERATOR_TOOLS
 
 log = structlog.get_logger()
 
@@ -112,6 +114,62 @@ async def _run_web_search_for_turn(
     return web_search.format_results_for_prompt(response)
 
 
+async def handle_tool_call(
+    conversation_id: uuid.UUID,
+    assistant_message_id: uuid.UUID,
+    tool_call_id: str,
+    name: str,
+    arguments: dict,
+) -> dict:
+    """Run a model-requested tool (agentic mode), persist a TOOL transcript
+    row, publish tool_status events for the live badge, and return the result
+    dict the WS handler ships back as ChatToolResultMsg.
+
+    Imported lazily-ish via the tools module to avoid a chat→tools→chat
+    import cycle (tools imports web_search/web_fetch only)."""
+    from app.orchestrator.tools import run_tool
+
+    # Phase: started — drives the "🔧 web_search: …" badge.
+    await bus.publish(
+        bus.conversation_topic(conversation_id),
+        {
+            "type": "tool_status",
+            "assistant_message_id": str(assistant_message_id),
+            "phase": "tool_start",
+            "tool": name,
+            "arguments": arguments,
+        },
+    )
+
+    text, payload = await run_tool(name, arguments)
+
+    # Persist a TOOL transcript row so the conversation shows what ran.
+    async with SessionLocal() as session:
+        async with session.begin():
+            session.add(ConversationMessage(
+                conversation_id=conversation_id,
+                role=MessageRole.TOOL,
+                content="",
+                complete=True,
+                tool_name=name,
+                tool_payload={"arguments": arguments, **payload},
+            ))
+
+    await bus.publish(
+        bus.conversation_topic(conversation_id),
+        {
+            "type": "tool_status",
+            "assistant_message_id": str(assistant_message_id),
+            "phase": "tool_done",
+            "tool": name,
+            "arguments": arguments,
+            "payload": payload,
+        },
+    )
+
+    return {"success": True, "content": text}
+
+
 async def dispatch_turn(
     conversation: Conversation,
     assistant_message_id: uuid.UUID,
@@ -128,12 +186,15 @@ async def dispatch_turn(
     idle = [w for w in workers if w.current_task_id is None]
     worker = (idle or workers)[0]
 
-    # ── Web search (Phase 1: pre-flight injection) ──────────────────
-    # When the conversation has the toggle on, run a search against the
-    # latest user message and prepend a synthetic system message with the
-    # results. The model gets it as fresh context; no protocol changes
-    # needed and any local model works.
-    if conversation.web_search_enabled:
+    web_mode = getattr(conversation, "web_mode", None) or (
+        "search" if conversation.web_search_enabled else "off"
+    )
+
+    # ── "search" mode (Phase 1: pre-flight injection) ───────────────
+    # Run a search against the latest user message and prepend a synthetic
+    # system message with the results. Works on any model; no tool support
+    # needed.
+    if web_mode == "search":
         latest_user = next(
             (m["content"] for m in reversed(history)
              if m.get("role") == "user" and m.get("content")),
@@ -165,11 +226,19 @@ async def dispatch_turn(
         head = [m for m in history[:1] if m.get("role") == "system"]
         trimmed = head + history[-_MAX_HISTORY:]
 
+    # ── "tools" mode (Phase 2: agentic loop) ────────────────────────
+    # Hand the model the tool schemas. The worker runs the search→fetch loop
+    # and emits ChatToolCallMsg for each call; routes/workers.py runs the
+    # tool and replies. Only effective on tool-capable models; others simply
+    # ignore the `tools` field and answer directly.
+    tools = OPERATOR_TOOLS if web_mode == "tools" else None
+
     msg = ChatRequestMsg(
         conversation_id=conversation.id,
         assistant_message_id=assistant_message_id,
         model=conversation.model,
         messages=trimmed,
+        tools=tools,
     )
     try:
         await worker.send(msg.model_dump(mode="json"))
@@ -216,6 +285,11 @@ async def on_done(
                 am.content = content
                 am.complete = True
                 am.error = None
+                # Bump created_at to completion time so the assistant reply
+                # sorts AFTER any TOOL rows persisted mid-turn (agentic mode).
+                # Without this the reply would render above the tool cards
+                # that informed it, since the empty row predates them.
+                am.created_at = datetime.now(timezone.utc)
     await bus.publish(
         bus.conversation_topic(conversation_id),
         {
@@ -241,6 +315,7 @@ async def on_error(
                 am.content = partial
                 am.complete = True
                 am.error = error
+                am.created_at = datetime.now(timezone.utc)
     # Named "turn_error" rather than "error" so it doesn't collide with the
     # browser EventSource's built-in connection-error event.
     await bus.publish(

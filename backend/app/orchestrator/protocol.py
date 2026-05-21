@@ -144,8 +144,12 @@ class ChatRequestMsg(BaseModel):
     conversation_id: uuid.UUID
     assistant_message_id: uuid.UUID  # the pre-created empty assistant row to fill
     model: str | None  # None → worker uses its DEFAULT_MODEL
-    # Full message history to feed the model: [{role, content}, ...].
-    messages: list[dict[str, str]]
+    # Full message history to feed the model: [{role, content}, ...]. dict
+    # values can be nested (tool-role messages carry a tool_calls list).
+    messages: list[dict[str, Any]]
+    # OpenAI-style tool schema. None / empty → plain chat (no tool loop). When
+    # present the worker runs a tool-calling loop and emits ChatToolCallMsg.
+    tools: list[dict[str, Any]] | None = None
 
 
 class ChatChunkMsg(BaseModel):
@@ -155,6 +159,31 @@ class ChatChunkMsg(BaseModel):
     conversation_id: uuid.UUID
     assistant_message_id: uuid.UUID
     delta: str
+
+
+class ChatToolCallMsg(BaseModel):
+    """worker → orchestrator: the model requested a tool call mid-turn. The
+    orchestrator runs the tool and replies with a ChatToolResultMsg bearing
+    the same tool_call_id."""
+
+    type: Literal["chat_tool_call"] = "chat_tool_call"
+    conversation_id: uuid.UUID
+    assistant_message_id: uuid.UUID
+    tool_call_id: str
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatToolResultMsg(BaseModel):
+    """orchestrator → worker: result of a worker-requested tool call."""
+
+    type: Literal["chat_tool_result"] = "chat_tool_result"
+    conversation_id: uuid.UUID
+    assistant_message_id: uuid.UUID
+    tool_call_id: str
+    success: bool
+    content: str = ""
+    error: str | None = None
 
 
 class ChatDoneMsg(BaseModel):

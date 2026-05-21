@@ -30,6 +30,8 @@ from app.protocol import (
     ChatDoneMsg,
     ChatErrorMsg,
     ChatRequestMsg,
+    ChatToolCallMsg,
+    ChatToolResultMsg,
     ClaimGrantMsg,
     ClaimRequestMsg,
     HeartbeatMsg,
@@ -67,6 +69,10 @@ class Worker:
         self.current_task: uuid.UUID | None = None
         self._stop = asyncio.Event()
         self._send_lock = asyncio.Lock()
+        # Futures awaiting a ChatToolResultMsg, keyed by tool_call_id. The
+        # run_chat tool loop creates one when it emits a tool call; the
+        # consume loop resolves it when the orchestrator's result arrives.
+        self._pending_tool_calls: dict[str, asyncio.Future] = {}
 
     # ── transport ──────────────────────────────────────────────────────────
 
@@ -192,13 +198,24 @@ class Worker:
         self.current_task = None
         await self.send(ClaimRequestMsg().model_dump(mode="json"))
 
-    async def run_chat(self, req: ChatRequestMsg) -> None:
-        """Answer one Operator conversation turn by streaming Ollama output.
+    # Bound the tool loop so a confused model can't ping-pong forever.
+    _MAX_TOOL_ITERATIONS = 6
 
-        Unlike run_job there's no clone, no runner class, no result row — we
-        stream chat_chunk deltas and finish with chat_done (or chat_error).
+    async def run_chat(self, req: ChatRequestMsg) -> None:
+        """Answer one Operator conversation turn.
+
+        Two paths:
+          - No tools → stream chat_chunk deltas, finish with chat_done. (Phase 1.)
+          - Tools supplied → run a tool-calling loop: call Ollama with the
+            tools, and whenever the model emits tool_calls, ship each one to
+            the orchestrator, await the result, append it, and loop. The final
+            tool-free message is the answer. (Phase 2.)
         Runs concurrently with the consume loop, same as run_job.
         """
+        if req.tools:
+            await self._run_chat_with_tools(req)
+            return
+
         provider = get_provider()
         model = req.model or self.settings.default_model
         log.info("worker.chat_started", conversation=str(req.conversation_id), model=model)
@@ -236,6 +253,115 @@ class Worker:
         ).model_dump(mode="json"))
         log.info("worker.chat_done", conversation=str(req.conversation_id))
 
+    async def _call_tool(
+        self, req: ChatRequestMsg, name: str, arguments: dict[str, Any]
+    ) -> str:
+        """Ship one tool call to the orchestrator and await its result. The
+        consume loop resolves the future when ChatToolResultMsg arrives."""
+        tool_call_id = uuid.uuid4().hex
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._pending_tool_calls[tool_call_id] = fut
+        await self.send(ChatToolCallMsg(
+            conversation_id=req.conversation_id,
+            assistant_message_id=req.assistant_message_id,
+            tool_call_id=tool_call_id,
+            name=name,
+            arguments=arguments,
+        ).model_dump(mode="json"))
+        try:
+            # Generous ceiling — fetch + extract of a slow page can take a bit.
+            result: ChatToolResultMsg = await asyncio.wait_for(fut, timeout=60.0)
+        except asyncio.TimeoutError:
+            return "Tool call timed out before the orchestrator responded."
+        finally:
+            self._pending_tool_calls.pop(tool_call_id, None)
+        if not result.success:
+            return f"Tool error: {result.error or 'unknown error'}"
+        return result.content
+
+    async def _run_chat_with_tools(self, req: ChatRequestMsg) -> None:
+        """Tool-calling loop. Non-streaming per iteration (Ollama returns
+        tool_calls in the message); the final tool-free answer is sent as a
+        single chunk + done so the UI updates in one shot."""
+        provider = get_provider()
+        model = req.model or self.settings.default_model
+        log.info("worker.chat_tools_started",
+                 conversation=str(req.conversation_id), model=model,
+                 tools=[t.get("function", {}).get("name") for t in (req.tools or [])])
+        messages = list(req.messages)
+        tokens_in = 0
+        tokens_out = 0
+        try:
+            for iteration in range(self._MAX_TOOL_ITERATIONS):
+                result = await provider.chat(model, messages, tools=req.tools)
+                msg = result.get("message") or {}
+                tokens_in += result.get("prompt_eval_count", 0) or 0
+                tokens_out += result.get("eval_count", 0) or 0
+                tool_calls = msg.get("tool_calls") or []
+
+                if not tool_calls:
+                    # Final answer.
+                    content = msg.get("content") or ""
+                    await self.send(ChatChunkMsg(
+                        conversation_id=req.conversation_id,
+                        assistant_message_id=req.assistant_message_id,
+                        delta=content,
+                    ).model_dump(mode="json"))
+                    await self.send(ChatDoneMsg(
+                        conversation_id=req.conversation_id,
+                        assistant_message_id=req.assistant_message_id,
+                        content=content, tokens_in=tokens_in, tokens_out=tokens_out,
+                    ).model_dump(mode="json"))
+                    log.info("worker.chat_tools_done",
+                             conversation=str(req.conversation_id), iterations=iteration + 1)
+                    return
+
+                # Record the assistant's tool-call message in history, then run
+                # each tool and append a tool-role message with the result.
+                messages.append({
+                    "role": "assistant", "content": msg.get("content") or "",
+                    "tool_calls": tool_calls,
+                })
+                for tc in tool_calls:
+                    fn = tc.get("function") or {}
+                    name = fn.get("name") or ""
+                    args = fn.get("arguments") or {}
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError:
+                            args = {}
+                    tool_output = await self._call_tool(req, name, args)
+                    messages.append({
+                        "role": "tool", "tool_name": name, "content": tool_output,
+                    })
+
+            # Exhausted the iteration budget — make one final tool-free call so
+            # the model produces a real answer instead of stalling.
+            final = await provider.chat(model, messages)
+            content = (final.get("message") or {}).get("content") or (
+                "I wasn't able to finish researching that within the tool-call "
+                "budget. Here's what I found so far."
+            )
+            await self.send(ChatChunkMsg(
+                conversation_id=req.conversation_id,
+                assistant_message_id=req.assistant_message_id,
+                delta=content,
+            ).model_dump(mode="json"))
+            await self.send(ChatDoneMsg(
+                conversation_id=req.conversation_id,
+                assistant_message_id=req.assistant_message_id,
+                content=content, tokens_in=tokens_in, tokens_out=tokens_out,
+            ).model_dump(mode="json"))
+        except Exception as exc:
+            log.exception("worker.chat_tools_failed")
+            await self.send(ChatErrorMsg(
+                conversation_id=req.conversation_id,
+                assistant_message_id=req.assistant_message_id,
+                error=str(exc),
+            ).model_dump(mode="json"))
+
     async def run_workbench_job(self, req: WorkbenchRequestMsg) -> None:
         """Run one non-streaming Workbench inference (resume import, tailoring,
         bullet improvement). Unlike chat, there's no streaming — the
@@ -272,6 +398,11 @@ class Worker:
             elif t == "chat_request":
                 req = ChatRequestMsg.model_validate(data)
                 asyncio.create_task(self.run_chat(req))
+            elif t == "chat_tool_result":
+                res = ChatToolResultMsg.model_validate(data)
+                fut = self._pending_tool_calls.get(res.tool_call_id)
+                if fut and not fut.done():
+                    fut.set_result(res)
             elif t == "workbench_request":
                 wreq = WorkbenchRequestMsg.model_validate(data)
                 asyncio.create_task(self.run_workbench_job(wreq))

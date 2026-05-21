@@ -261,11 +261,15 @@ class Conversation(Base):
     pool: Mapped[str] = mapped_column(String(64), default="researcher")
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # When True, every user turn first runs the user's message through the
-    # configured web search backend and the orchestrator injects the top
-    # results into the prompt as a synthetic system message. Sticky per
-    # conversation; toggled from the composer.
+    # Legacy Phase-1 flag, superseded by web_mode. Kept so old rows don't
+    # break; the boot migration backfills web_mode from it.
     web_search_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Web access mode for this conversation:
+    #   "off"    — plain chat, no web (default)
+    #   "search" — Phase 1 pre-flight SearXNG injection; works on any model
+    #   "tools"  — Phase 2 agentic loop (web_search + fetch_url); needs a
+    #              tool-capable model
+    web_mode: Mapped[str] = mapped_column(String(16), default="off")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

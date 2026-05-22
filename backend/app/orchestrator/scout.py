@@ -118,6 +118,54 @@ def _find_embedded_json(soup: BeautifulSoup) -> dict | None:
     return None
 
 
+_SELECTOR_ATTR_RE = re.compile(r"::attr\(([^)]+)\)\s*$")
+_SELECTOR_TEXT_RE = re.compile(r"::text\s*$")
+
+
+def _apply_selector(soup: BeautifulSoup, raw_selector: str) -> str | None:
+    """Resolve one CSS selector against the page. Tolerates Scrapy-style
+    `::text` and `::attr(name)` suffixes that models love to emit but
+    soupsieve can't parse."""
+    if not isinstance(raw_selector, str) or not raw_selector.strip():
+        return None
+    selector = raw_selector.strip()
+    attr: str | None = None
+    m = _SELECTOR_ATTR_RE.search(selector)
+    if m:
+        attr = m.group(1).strip()
+        selector = selector[: m.start()].strip()
+    else:
+        selector = _SELECTOR_TEXT_RE.sub("", selector).strip()
+    if not selector:
+        return None
+    try:
+        el = soup.select_one(selector)
+    except Exception:
+        return None
+    if el is None:
+        return None
+    if attr:
+        val = el.get(attr)
+        return val.strip() if isinstance(val, str) else None
+    text = el.get_text(strip=True)
+    return text or None
+
+
+def _css_hint(el) -> str:
+    """Build a compact, usable CSS selector for an element: tag + id or up to
+    two classes. Good enough for the model to target a price node."""
+    if el is None or not getattr(el, "name", None):
+        return ""
+    tag = el.name
+    el_id = el.get("id")
+    if el_id:
+        return f"{tag}#{el_id}"
+    classes = [c for c in (el.get("class") or []) if c][:2]
+    if classes:
+        return tag + "".join(f".{c}" for c in classes)
+    return tag
+
+
 # ── recipe applier ─────────────────────────────────────────────────
 
 
@@ -157,14 +205,9 @@ def apply_recipe(html: str, recipe: ExtractionRecipe) -> dict[str, Any]:
 
     elif recipe.strategy == ExtractionStrategy.SELECTORS:
         for field, selector in field_map.items():
-            try:
-                el = soup.select_one(selector)
-            except Exception:
-                el = None
-            if el is not None:
-                text = el.get_text(strip=True)
-                if text:
-                    out[field] = text
+            val = _apply_selector(soup, selector)
+            if val:
+                out[field] = val
 
     # ExtractionStrategy.API isn't applied to HTML — it's a Phase C fetch path.
     # Normalize scalar values to strings for clean display.
@@ -336,7 +379,39 @@ def extract_candidate_signal(html: str) -> str:
     if metas:
         parts.append("META TAGS:\n" + "\n".join(metas[:20]))
 
-    return "\n\n".join(parts)[:12000] or "(no structured data found on the page)"
+    # Price-bearing DOM elements. Many sites (Reverb) render the price into
+    # plain elements, not structured data — so scan the rendered DOM for
+    # currency-looking text and hand the model a selector hint for each. This
+    # is what makes a 'selectors' recipe possible on JS-rendered pages.
+    body = BeautifulSoup(html, "html.parser")
+    for t in body(["script", "style", "noscript"]):
+        t.decompose()
+    price_re = re.compile(r"(?:[$£€]|USD|EUR|GBP)\s?\d[\d,]*(?:\.\d{1,2})?")
+    seen: set[str] = set()
+    price_hits: list[str] = []
+    for node in body.find_all(string=price_re):
+        parent = node.parent
+        hint = _css_hint(parent)
+        text = node.strip()
+        key = f"{hint}::{text}"
+        if not hint or key in seen:
+            continue
+        seen.add(key)
+        price_hits.append(f"{hint} :: {text}")
+        if len(price_hits) >= 15:
+            break
+    if price_hits:
+        parts.append(
+            "PRICE-LIKE ELEMENTS (css_selector :: text) — for a 'selectors' "
+            "recipe, use the selector whose text is the actual listing price:\n"
+            + "\n".join(price_hits)
+        )
+
+    visible = " ".join(body.get_text(" ").split())
+    if visible:
+        parts.append("VISIBLE TEXT SAMPLE:\n" + visible[:2500])
+
+    return "\n\n".join(parts)[:14000] or "(no structured data found on the page)"
 
 
 def build_learn_messages(domain: str, signal: str) -> list[dict[str, str]]:

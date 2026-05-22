@@ -81,6 +81,16 @@ async def render(
             await page.wait_for_load_state("networkidle", timeout=8000)
         except PlaywrightTimeoutError:
             pass
+        # Best-effort: wait until a price-looking string appears in the body,
+        # since on marketplace pages the price is often the last thing the JS
+        # paints. Cheap insurance against snapshotting a half-rendered page.
+        try:
+            await page.wait_for_function(
+                r"() => /(?:[$£€]|USD|EUR|GBP)\s?\d/.test(document.body.innerText)",
+                timeout=8000,
+            )
+        except PlaywrightTimeoutError:
+            pass
         if settle_ms > 0:
             await page.wait_for_timeout(settle_ms)
         html = await page.content()

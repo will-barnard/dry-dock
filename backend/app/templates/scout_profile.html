@@ -51,12 +51,20 @@
     </div>
     <p class="text-xs text-slate-500 mt-1">This page refreshes every few seconds.</p>
   {% else %}
-    <form method="post" action="/scout/profiles/{{ profile.id }}/learn" class="mt-3 flex gap-2">
-      <input name="sample_url" required
-             value="{{ latest_learning_job.sample_url if latest_learning_job else '' }}"
-             placeholder="https://reverb.com/item/…"
-             class="flex-1 border border-slate-300 rounded px-2 py-1 font-mono text-xs">
-      <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded shrink-0">✦ Learn from this page</button>
+    <form method="post" action="/scout/profiles/{{ profile.id }}/learn" class="mt-3 space-y-2">
+      <div class="flex gap-2">
+        <input name="sample_url" required
+               value="{{ latest_learning_job.sample_url if latest_learning_job else '' }}"
+               placeholder="https://reverb.com/item/…"
+               class="flex-1 border border-slate-300 rounded px-2 py-1 font-mono text-xs">
+        <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded shrink-0">✦ Learn from this page</button>
+      </div>
+      <label class="inline-flex items-center gap-1.5 text-xs text-slate-600">
+        <input type="checkbox" name="use_browser" value="1"
+               {% if active and active.needs_js %}checked{% endif %}>
+        Use headless browser (for JS-rendered sites like Reverb whose data
+        isn't in the static HTML)
+      </label>
     </form>
     {% if latest_learning_job and latest_learning_job.status == 'done' and latest_learning_job.result %}
       <div class="mt-3 text-xs text-emerald-700">

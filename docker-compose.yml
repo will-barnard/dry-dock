@@ -46,6 +46,9 @@ services:
       WEB_SEARCH_MAX_RESULTS: ${WEB_SEARCH_MAX_RESULTS:-5}
       WEB_SEARCH_DAILY_BUDGET: ${WEB_SEARCH_DAILY_BUDGET:-200}
       WEB_SEARCH_TIMEOUT_SECONDS: ${WEB_SEARCH_TIMEOUT_SECONDS:-5.0}
+      # Scout headless renderer (internal service).
+      RENDERER_URL: ${RENDERER_URL:-http://renderer:3000}
+      RENDERER_TIMEOUT_SECONDS: ${RENDERER_TIMEOUT_SECONDS:-30.0}
       LOG_LEVEL: INFO
     expose:
       - "8000"
@@ -60,6 +63,23 @@ services:
     # plain Docker Engine where it isn't auto-provisioned.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - internal
+
+  renderer:
+    build:
+      context: ./renderer
+    restart: unless-stopped
+    expose:
+      - "3000"
+    # Chromium is memory-hungry; give it room and a healthcheck so the
+    # backend can depend on it being ready.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:3000/healthz').status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     networks:
       - internal
 

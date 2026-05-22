@@ -392,8 +392,9 @@ async def dispatch_site_learning(job_id: uuid.UUID) -> str | None:
         profile = await session.get(SiteProfile, job.site_profile_id)
         domain = profile.domain if profile else ""
         url = job.sample_url
+        use_browser = bool(job.use_browser)
 
-    html, error = await web_fetch.fetch_raw(url)
+    html, error = await web_fetch.fetch_raw(url, render=use_browser)
     if html is None:
         return f"could not fetch the sample page: {error}"
 
@@ -489,12 +490,15 @@ async def handle_site_learning_result(
             next_version = max((r.version for r in recipes), default=0) + 1
             for r in recipes:
                 r.active = False
+            # If we needed the browser to read this page, the recipe needs it
+            # at runtime too — flag needs_js regardless of the model's claim.
+            needs_js = bool(job.use_browser) or bool(proposed.get("needs_js"))
             session.add(ExtractionRecipe(
                 site_profile_id=job.site_profile_id,
                 version=next_version,
                 strategy=strategy,
                 field_map=field_map,
-                needs_js=bool(proposed.get("needs_js")),
+                needs_js=needs_js,
                 confidence=min(1.0, len(fields) / 6.0),
                 active=True,
                 last_validated_at=datetime.now(timezone.utc),

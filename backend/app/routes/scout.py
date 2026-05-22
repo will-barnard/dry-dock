@@ -129,6 +129,7 @@ async def profile_detail(
 async def learn_recipe(
     profile_id: uuid.UUID,
     sample_url: str = Form(...),
+    use_browser: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
@@ -141,7 +142,10 @@ async def learn_recipe(
     if not url:
         raise HTTPException(400, "a sample URL is required")
 
-    job = SiteLearningJob(site_profile_id=profile_id, status="pending", sample_url=url)
+    job = SiteLearningJob(
+        site_profile_id=profile_id, status="pending", sample_url=url,
+        use_browser=bool(use_browser.strip()),
+    )
     profile.status = SiteProfileStatus.LEARNING
     session.add(job)
     await session.commit()

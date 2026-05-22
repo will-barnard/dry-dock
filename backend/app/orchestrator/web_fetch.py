@@ -153,13 +153,47 @@ def _extract(html: str, url: str) -> str:
     return summary or "(the page returned no extractable text or structured data)"
 
 
-async def fetch_raw(url: str) -> tuple[str | None, str | None]:
+async def _render_via_service(url: str) -> tuple[str | None, str | None]:
+    """Fetch a URL through the headless renderer service (Phase C). Returns
+    (html, None) or (None, error)."""
+    settings = get_settings()
+    base = (settings.renderer_url or "").rstrip("/")
+    if not base:
+        return None, "renderer not configured"
+    try:
+        async with httpx.AsyncClient(timeout=settings.renderer_timeout_seconds) as client:
+            resp = await client.get(f"{base}/render", params={"url": url})
+            if resp.status_code != 200:
+                # Renderer returns JSON {error} on 502/503.
+                detail = ""
+                try:
+                    detail = resp.json().get("error", "")
+                except Exception:
+                    detail = resp.text[:200]
+                return None, f"renderer {resp.status_code}: {detail}"
+            return resp.text[:_MAX_BYTES], None
+    except httpx.HTTPError as exc:
+        return None, f"renderer unreachable: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        log.exception("web_fetch.render_failed", url=url[:200])
+        return None, str(exc)
+
+
+async def fetch_raw(url: str, *, render: bool = False) -> tuple[str | None, str | None]:
     """Fetch a URL and return (html_body, None) or (None, error_string).
-    Shared by fetch() and Scout's learning pipeline, which needs the raw HTML
-    to analyze and validate against — not the extracted summary."""
+
+    `render=True` routes through the headless renderer service so JS-rendered
+    pages (Reverb et al.) come back fully populated. Shared by fetch() and
+    Scout's learning pipeline, which need raw HTML to analyze / validate."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return None, f"Refused to fetch '{url}': only http(s) URLs are supported."
+
+    # Politeness applies to both paths.
+    await _rate_limit(parsed.netloc)
+
+    if render:
+        return await _render_via_service(url)
 
     headers = _browser_headers()
     try:
@@ -168,7 +202,6 @@ async def fetch_raw(url: str) -> tuple[str | None, str | None]:
         ) as client:
             if not await _robots_allows(client, url):
                 return None, f"robots.txt disallows fetching {url}."
-            await _rate_limit(parsed.netloc)
             resp = await client.get(url)
             resp.raise_for_status()
             ctype = resp.headers.get("content-type", "")
@@ -190,32 +223,36 @@ async def fetch_raw(url: str) -> tuple[str | None, str | None]:
 async def fetch(url: str) -> str:
     """Fetch a URL and return a compact text summary, or a human-readable
     error string (never raises — the tool layer wants a string either way)."""
-    body, error = await fetch_raw(url)
-    if body is None:
-        return f"Fetch of {url} failed: {error}."
-
-    # Site-aware extraction (Scout): if this domain has an active recipe, try
-    # it first for clean structured fields. Fall back to generic extraction
-    # when there's no recipe or it matched nothing.
     from app.orchestrator import scout
 
+    # Look the recipe up FIRST so we know whether this domain needs the
+    # headless renderer before we fetch.
     domain = scout.domain_of(url)
+    hit = None
     if domain:
         try:
             async with SessionLocal() as session:
                 hit = await scout.active_recipe_for_domain(session, domain)
-            if hit is not None:
-                profile, recipe = hit
-                fields = scout.apply_recipe(body, recipe)
-                if fields:
-                    await scout.record_outcome(recipe.id, success=True)
-                    structured = scout.format_fields(domain, url, fields)
-                    # Append a trimmed generic body too, so the model has
-                    # surrounding context beyond the mapped fields.
-                    return f"{structured}\n\n---\n{_extract(body, url)[:2000]}"
-                else:
-                    await scout.record_outcome(recipe.id, success=False)
-                    log.info("web_fetch.recipe_miss", domain=domain)
+        except Exception:
+            log.exception("web_fetch.recipe_lookup_failed", domain=domain)
+    render = bool(hit and hit[1].needs_js)
+
+    body, error = await fetch_raw(url, render=render)
+    if body is None:
+        return f"Fetch of {url} failed: {error}."
+
+    # Site-aware extraction: apply the active recipe if we have one.
+    if hit is not None:
+        try:
+            _profile, recipe = hit
+            fields = scout.apply_recipe(body, recipe)
+            if fields:
+                await scout.record_outcome(recipe.id, success=True)
+                structured = scout.format_fields(domain, url, fields)
+                return f"{structured}\n\n---\n{_extract(body, url)[:2000]}"
+            else:
+                await scout.record_outcome(recipe.id, success=False)
+                log.info("web_fetch.recipe_miss", domain=domain)
         except Exception:
             log.exception("web_fetch.scout_failed", domain=domain)
 

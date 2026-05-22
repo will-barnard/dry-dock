@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     web_search_timeout_seconds: float = Field(
         default=5.0, alias="WEB_SEARCH_TIMEOUT_SECONDS"
     )
+    # Scout headless renderer (Phase C). Internal service that renders JS
+    # pages. Empty url disables rendering (fetch falls back to static).
+    renderer_url: str = Field(default="http://renderer:3000", alias="RENDERER_URL")
+    renderer_timeout_seconds: float = Field(
+        default=30.0, alias="RENDERER_TIMEOUT_SECONDS"
+    )
+
     # User-Agent for the fetch_url tool. Defaults to a mainstream browser
     # string — an honest bot UA gets 403'd by Cloudflare-fronted sites.
     web_fetch_user_agent: str = Field(

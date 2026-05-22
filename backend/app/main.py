@@ -54,6 +54,8 @@ _INLINE_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS web_mode VARCHAR(16) NOT NULL DEFAULT 'off'",
     "UPDATE conversations SET web_mode = 'search' WHERE web_search_enabled = TRUE AND web_mode = 'off'",
     "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS search_site VARCHAR(255)",
+    # Scout Phase C: opt-in headless rendering for a learning job.
+    "ALTER TABLE site_learning_jobs ADD COLUMN IF NOT EXISTS use_browser BOOLEAN NOT NULL DEFAULT FALSE",
     # Temp accounts (12-hour token login)
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_temp BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS temp_token VARCHAR(64)",

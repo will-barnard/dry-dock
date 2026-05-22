@@ -657,6 +657,9 @@ class SiteLearningJob(Base):
     )
     status: Mapped[str] = mapped_column(String(16), default="pending")
     sample_url: Mapped[str] = mapped_column(Text)
+    # Whether to render the sample page through the headless browser (Phase C)
+    # before analyzing it. Set from the Learn form's checkbox.
+    use_browser: Mapped[bool] = mapped_column(Boolean, default=False)
     # Raw HTML stashed so the result handler can validate the proposed recipe
     # against the exact page the model analyzed (no re-fetch / drift).
     sample_html: Mapped[str | None] = mapped_column(Text, nullable=True)

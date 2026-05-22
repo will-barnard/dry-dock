@@ -48,7 +48,7 @@ services:
       WEB_SEARCH_TIMEOUT_SECONDS: ${WEB_SEARCH_TIMEOUT_SECONDS:-5.0}
       # Scout headless renderer (internal service).
       RENDERER_URL: ${RENDERER_URL:-http://renderer:3000}
-      RENDERER_TIMEOUT_SECONDS: ${RENDERER_TIMEOUT_SECONDS:-30.0}
+      RENDERER_TIMEOUT_SECONDS: ${RENDERER_TIMEOUT_SECONDS:-45.0}
       LOG_LEVEL: INFO
     expose:
       - "8000"

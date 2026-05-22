@@ -15,6 +15,7 @@ import os
 
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse, PlainTextResponse
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 app = FastAPI(title="dry-dock renderer")
@@ -53,23 +54,33 @@ async def healthz() -> dict:
 @app.get("/render", response_class=PlainTextResponse)
 async def render(
     url: str = Query(...),
-    wait_until: str = Query("networkidle"),
-    timeout_ms: int = Query(20000),
-    settle_ms: int = Query(1500),
+    timeout_ms: int = Query(25000),
+    settle_ms: int = Query(2500),
 ):
     """Render a URL and return the post-JavaScript HTML.
 
-    `wait_until=networkidle` waits for the page to stop making requests, which
-    is usually when client-rendered data has landed; `settle_ms` adds a small
-    grace period for late XHR. Errors return 502 with a JSON message so the
-    backend can degrade gracefully.
+    Resilient by design: many SPAs (Reverb included) fire continuous
+    background requests so the network never goes 'idle' — waiting for that
+    would always time out. Instead we navigate on `domcontentloaded`, give
+    the network a best-effort window to settle so client-rendered data lands,
+    add a short grace period, and return whatever rendered. We only 502 on a
+    real navigation failure (DNS, connection refused, browser crash), never on
+    a slow page.
     """
     if _browser is None:
         return JSONResponse({"error": "browser not ready"}, status_code=503)
     context = await _browser.new_context(user_agent=_USER_AGENT)
     page = await context.new_page()
     try:
-        await page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        except PlaywrightTimeoutError:
+            pass  # navigation slow — use whatever loaded
+        # Best-effort wait for client-rendered data; don't fail if it never settles.
+        try:
+            await page.wait_for_load_state("networkidle", timeout=8000)
+        except PlaywrightTimeoutError:
+            pass
         if settle_ms > 0:
             await page.wait_for_timeout(settle_ms)
         html = await page.content()

@@ -6,6 +6,7 @@ trusting it.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -143,7 +144,7 @@ async def learn_recipe(
         raise HTTPException(400, "a sample URL is required")
 
     job = SiteLearningJob(
-        site_profile_id=profile_id, status="pending", sample_url=url,
+        site_profile_id=profile_id, status="running", sample_url=url,
         use_browser=bool(use_browser.strip()),
     )
     profile.status = SiteProfileStatus.LEARNING
@@ -151,13 +152,10 @@ async def learn_recipe(
     await session.commit()
     await session.refresh(job)
 
-    err = await scout.dispatch_site_learning(job.id)
-    if err:
-        async with session.begin():
-            j = await session.get(SiteLearningJob, job.id)
-            if j:
-                j.status = "error"
-                j.error = err
+    # Fire-and-forget: rendering a JS page can take 10-40s, so we don't block
+    # the POST on it. The job shows 'running' immediately and the profile page
+    # auto-refreshes to track it; run_learning_job records any error itself.
+    asyncio.create_task(scout.run_learning_job(job.id))
     return RedirectResponse(f"/scout/profiles/{profile_id}", status_code=303)
 
 

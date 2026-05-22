@@ -433,6 +433,25 @@ async def dispatch_site_learning(job_id: uuid.UUID) -> str | None:
     return None
 
 
+async def run_learning_job(job_id: uuid.UUID) -> None:
+    """Background entrypoint: run dispatch and, if it fails synchronously
+    (bad fetch / no worker / render error), record the error on the job so it
+    never strands in a running state. Designed to be fired via
+    asyncio.create_task from the route so a slow render doesn't block the POST."""
+    try:
+        err = await dispatch_site_learning(job_id)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("scout.learn_job_crashed", job=str(job_id))
+        err = str(exc)
+    if err:
+        async with SessionLocal() as session:
+            async with session.begin():
+                job = await session.get(SiteLearningJob, job_id)
+                if job and job.status not in ("done",):
+                    job.status = "error"
+                    job.error = err
+
+
 async def handle_site_learning_result(
     job_id: uuid.UUID, success: bool, content: str, error: str | None
 ) -> None:

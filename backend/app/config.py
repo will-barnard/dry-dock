@@ -80,8 +80,9 @@ class Settings(BaseSettings):
     # Scout headless renderer (Phase C). Internal service that renders JS
     # pages. Empty url disables rendering (fetch falls back to static).
     renderer_url: str = Field(default="http://renderer:3000", alias="RENDERER_URL")
+    # Must exceed the renderer's worst case (≈25s nav + 8s settle + grace).
     renderer_timeout_seconds: float = Field(
-        default=30.0, alias="RENDERER_TIMEOUT_SECONDS"
+        default=45.0, alias="RENDERER_TIMEOUT_SECONDS"
     )
 
     # User-Agent for the fetch_url tool. Defaults to a mainstream browser

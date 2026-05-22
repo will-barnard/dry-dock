@@ -99,6 +99,19 @@ MODULES: list[dict] = [
         ),
         "accent": "amber",
     },
+    {
+        "id": "scout",
+        "name": "Scout",
+        "href": "/scout",
+        "status": "active",
+        "tagline": "Site knowledge for the fetch tool",
+        "description": (
+            "Per-site recipes for pulling structured data — prices, specs, "
+            "titles — out of pages. Makes the Operator's fetch_url return "
+            "clean fields instead of raw text on known domains."
+        ),
+        "accent": "emerald",
+    },
 ]
 
 

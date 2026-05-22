@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Scout — site knowledge{% endblock %}
+{% block content %}
+<nav class="text-sm text-slate-500 mb-4"><a href="/" class="hover:underline">Modules</a> / Scout</nav>
+
+<header class="mb-6">
+  <h1 class="text-2xl font-semibold">Scout — site knowledge</h1>
+  <p class="text-sm text-slate-500 mt-1">
+    Per-site recipes for pulling structured data (prices, specs, titles) out of
+    pages. When the Operator's <span class="font-mono">fetch_url</span> tool hits a
+    known domain, it applies the recipe and returns clean fields instead of raw text.
+  </p>
+</header>
+
+<section class="bg-white border border-slate-200 rounded p-4 mb-6">
+  <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600 mb-2">Known sites</h2>
+  {% if profiles %}
+    <ul class="space-y-2">
+      {% for p in profiles %}
+        {% set active = (p.recipes | selectattr('active') | list | first) %}
+        <li class="border border-slate-100 rounded p-3 flex items-baseline justify-between">
+          <a href="/scout/profiles/{{ p.id }}" class="flex-1">
+            <div class="font-medium">
+              {{ p.display_name or p.domain }}
+              <span class="text-slate-500 font-mono text-xs ml-1">{{ p.domain }}</span>
+            </div>
+            <div class="text-xs text-slate-500 mt-0.5">
+              {% if active %}
+                strategy: {{ active.strategy.value }} ·
+                fields: {{ active.field_map | length }} ·
+                ✓ {{ active.success_count }} / ✗ {{ active.failure_count }}
+              {% else %}
+                <span class="text-amber-600">no active recipe</span>
+              {% endif %}
+            </div>
+          </a>
+          <span class="text-[10px] px-2 py-0.5 rounded
+            {% if p.status.value == 'active' %}bg-emerald-100 text-emerald-700
+            {% elif p.status.value == 'stale' %}bg-amber-100 text-amber-700
+            {% elif p.status.value == 'failed' %}bg-rose-100 text-rose-700
+            {% else %}bg-slate-100 text-slate-600{% endif %}">
+            {{ p.status.value }}
+          </span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="text-sm text-slate-400 italic">No site profiles yet.</div>
+  {% endif %}
+</section>
+
+<section class="bg-white border border-slate-200 rounded p-4">
+  <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600 mb-2">Add a site</h2>
+  <form method="post" action="/scout/profiles" class="flex flex-wrap gap-2 items-end text-sm">
+    <label class="flex flex-col">
+      <span class="text-xs text-slate-500">domain</span>
+      <input name="domain" required placeholder="reverb.com"
+             class="border border-slate-300 rounded px-2 py-1 font-mono w-56">
+    </label>
+    <label class="flex flex-col">
+      <span class="text-xs text-slate-500">display name (optional)</span>
+      <input name="display_name" placeholder="Reverb"
+             class="border border-slate-300 rounded px-2 py-1 w-56">
+    </label>
+    <button class="bg-slate-900 text-white px-4 py-1.5 rounded">Add</button>
+  </form>
+</section>
+{% endblock %}

@@ -22,6 +22,8 @@ import httpx
 import structlog
 from bs4 import BeautifulSoup
 
+from app.db import SessionLocal
+
 log = structlog.get_logger()
 
 USER_AGENT = "dry-dock-operator/0.1 (+https://github.com/; research assistant)"
@@ -158,6 +160,31 @@ async def fetch(url: str) -> str:
     except Exception as exc:  # noqa: BLE001
         log.exception("web_fetch.unexpected", url=url[:200])
         return f"Fetch of {url} failed: {exc}."
+
+    # Site-aware extraction (Scout): if this domain has an active recipe, try
+    # it first for clean structured fields. Fall back to generic extraction
+    # when there's no recipe or it matched nothing.
+    from app.orchestrator import scout
+
+    domain = scout.domain_of(url)
+    if domain:
+        try:
+            async with SessionLocal() as session:
+                hit = await scout.active_recipe_for_domain(session, domain)
+            if hit is not None:
+                profile, recipe = hit
+                fields = scout.apply_recipe(body, recipe)
+                if fields:
+                    await scout.record_outcome(recipe.id, success=True)
+                    structured = scout.format_fields(domain, url, fields)
+                    # Append a trimmed generic body too, so the model has
+                    # surrounding context beyond the mapped fields.
+                    return f"{structured}\n\n---\n{_extract(body, url)[:2000]}"
+                else:
+                    await scout.record_outcome(recipe.id, success=False)
+                    log.info("web_fetch.recipe_miss", domain=domain)
+        except Exception:
+            log.exception("web_fetch.scout_failed", domain=domain)
 
     extracted = _extract(body, url)
     return f"Fetched: {url}\n\n{extracted}"

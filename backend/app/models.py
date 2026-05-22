@@ -561,3 +561,83 @@ class CoverLetter(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     body: Mapped[str] = mapped_column(Text, default="")  # the letter, in Markdown / plain prose
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Scout module: site-knowledge / extraction recipes ──────────────
+
+
+class SiteProfileStatus(str, enum.Enum):
+    LEARNING = "learning"   # a learning job is figuring out the recipe
+    ACTIVE = "active"       # has a validated, working recipe
+    STALE = "stale"         # recipe started failing; needs re-learn
+    FAILED = "failed"       # couldn't produce a working recipe
+
+
+class ExtractionStrategy(str, enum.Enum):
+    JSONLD = "jsonld"               # parse a JSON-LD block
+    EMBEDDED_JSON = "embedded_json" # read a dotted path out of an embedded JSON blob
+    SELECTORS = "selectors"         # CSS selectors per field
+    API = "api"                     # page is backed by a JSON endpoint (Phase C)
+
+
+class SiteProfile(Base):
+    """Everything Scout knows about one domain. The heart is its active
+    ExtractionRecipe — a validated description of where the useful data lives
+    on that site, so fetch_url can pull structured fields instead of a wall
+    of text."""
+
+    __tablename__ = "site_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    domain: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[SiteProfileStatus] = mapped_column(
+        Enum(SiteProfileStatus, name="site_profile_status"),
+        default=SiteProfileStatus.ACTIVE,
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    recipes: Mapped[list["ExtractionRecipe"]] = relationship(
+        back_populates="profile", cascade="all, delete-orphan",
+        order_by="ExtractionRecipe.version", lazy="selectin",
+    )
+
+
+class ExtractionRecipe(Base):
+    """A versioned, validated recipe for extracting structured fields from one
+    site. One recipe per profile is `active` at a time; re-learning adds a new
+    version and only flips active once it validates."""
+
+    __tablename__ = "extraction_recipes"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    site_profile_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("site_profiles.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    strategy: Mapped[ExtractionStrategy] = mapped_column(
+        Enum(ExtractionStrategy, name="extraction_strategy"),
+        default=ExtractionStrategy.JSONLD,
+    )
+    # field name → location, interpreted per strategy:
+    #   jsonld / embedded_json: a dotted path ("offers.price")
+    #   selectors:             a CSS selector ("span.price")
+    field_map: Mapped[dict] = mapped_column(JSON, default=dict)
+    # How to turn a query into a results URL/API call for this site (stored
+    # for a future "search the site directly" path; not wired in Phase A).
+    search_strategy: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    needs_js: Mapped[bool] = mapped_column(Boolean, default=False)
+    confidence: Mapped[float] = mapped_column(default=0.0)
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_validated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    success_count: Mapped[int] = mapped_column(Integer, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    profile: Mapped[SiteProfile] = relationship(back_populates="recipes")

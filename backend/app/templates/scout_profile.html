@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ profile.display_name or profile.domain }} — Scout{% endblock %}
+{% block content %}
+<nav class="text-sm text-slate-500 mb-4">
+  <a href="/" class="hover:underline">Modules</a> /
+  <a href="/scout" class="hover:underline">Scout</a> /
+  {{ profile.domain }}
+</nav>
+
+<header class="flex items-baseline justify-between mb-4">
+  <div>
+    <h1 class="text-xl font-semibold">
+      {{ profile.display_name or profile.domain }}
+      <span class="text-slate-500 font-mono text-sm ml-1">{{ profile.domain }}</span>
+    </h1>
+    {% if profile.notes %}<p class="text-sm text-slate-500 mt-1">{{ profile.notes }}</p>{% endif %}
+  </div>
+  <form method="post" action="/scout/profiles/{{ profile.id }}/delete" class="m-0"
+        onsubmit="return confirm('Delete this site profile and its recipes?');">
+    <button class="text-xs px-2 py-1 rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200">Delete</button>
+  </form>
+</header>
+
+<section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  {# ── recipe editor ── #}
+  <div class="bg-white border border-slate-200 rounded p-4">
+    <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600 mb-2">
+      Active recipe {% if active %}<span class="text-slate-400 font-normal">v{{ active.version }}</span>{% endif %}
+    </h2>
+    {% if active %}
+      <form method="post" action="/scout/recipes/{{ active.id }}" class="space-y-3 text-sm">
+        <label class="flex items-center gap-2">
+          strategy
+          <select name="strategy" class="border border-slate-300 rounded px-2 py-1">
+            {% for s in strategies %}
+              <option value="{{ s }}" {% if active.strategy.value == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div>
+          <div class="text-xs text-slate-500 mb-1">
+            field map (JSON) — field name → path (jsonld/embedded_json) or CSS selector (selectors)
+          </div>
+          <textarea name="field_map" rows="10"
+                    class="w-full border border-slate-300 rounded px-2 py-1 font-mono text-xs">{{ active.field_map | tojson(indent=2) }}</textarea>
+        </div>
+        <label class="flex items-center gap-2 text-xs">
+          <input type="checkbox" name="needs_js" value="1" {% if active.needs_js %}checked{% endif %}>
+          needs JS to render (informational in Phase A)
+        </label>
+        <div class="text-xs text-slate-500">
+          ✓ {{ active.success_count }} hits · ✗ {{ active.failure_count }} misses
+          {% if active.last_validated_at %} · validated {{ active.last_validated_at.strftime('%Y-%m-%d') }}{% endif %}
+        </div>
+        <button class="bg-slate-900 text-white px-4 py-2 rounded">Save recipe</button>
+      </form>
+    {% else %}
+      <div class="text-sm text-amber-600">No active recipe for this profile.</div>
+    {% endif %}
+  </div>
+
+  {# ── test fetch ── #}
+  <div class="bg-white border border-slate-200 rounded p-4">
+    <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600 mb-2">Test fetch</h2>
+    <p class="text-xs text-slate-500 mb-2">
+      Run a real URL through the live fetch path (the same one the Operator uses)
+      to see exactly what the recipe extracts before trusting it.
+    </p>
+    <form method="post" action="/scout/profiles/{{ profile.id }}/test-fetch" class="flex gap-2 text-sm">
+      <input name="url" required value="{{ test_url or '' }}"
+             placeholder="https://reverb.com/item/…"
+             class="flex-1 border border-slate-300 rounded px-2 py-1 font-mono text-xs">
+      <button class="bg-slate-700 text-white px-3 py-1.5 rounded shrink-0">Fetch</button>
+    </form>
+    {% if test_result is defined %}
+      <pre class="log text-xs whitespace-pre-wrap mt-3 p-3 bg-slate-50 border border-slate-100 rounded max-h-[28rem] overflow-auto">{{ test_result }}</pre>
+    {% endif %}
+  </div>
+</section>
+
+{% if recipes | length > 1 %}
+  <section class="mt-6">
+    <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600 mb-2">Recipe history</h2>
+    <ul class="space-y-1 text-sm">
+      {% for r in recipes %}
+        <li class="bg-white border border-slate-200 rounded p-2 flex items-center gap-2">
+          <span class="font-mono">v{{ r.version }}</span>
+          <span class="text-xs text-slate-500">{{ r.strategy.value }}</span>
+          {% if r.active %}<span class="text-[10px] bg-emerald-100 text-emerald-700 rounded px-1.5">active</span>{% endif %}
+          <span class="text-xs text-slate-400 ml-auto">✓ {{ r.success_count }} / ✗ {{ r.failure_count }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endif %}
+{% endblock %}

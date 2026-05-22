@@ -22,6 +22,7 @@ from app.routes import (
     operator as operator_routes,
     projects,
     remote_machines as remote_machines_routes,
+    scout as scout_routes,
     settings as settings_routes,
     streams,
     tasks,
@@ -103,6 +104,10 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
         for stmt in _INLINE_MIGRATIONS:
             await conn.execute(text(stmt))
+
+    # Seed the Scout starter site profiles (idempotent).
+    from app.orchestrator.scout import seed_reverb_profile
+    await seed_reverb_profile()
 
     await dispatcher.start()
     # Workbench watchdog — periodic sweep that moves stale RUNNING/PENDING
@@ -186,3 +191,4 @@ app.include_router(settings_routes.router, dependencies=_auth)
 app.include_router(remote_machines_routes.router, dependencies=_auth)
 app.include_router(operator_routes.router, dependencies=_auth)
 app.include_router(workbench_routes.router, dependencies=_auth)
+app.include_router(scout_routes.router, dependencies=_auth)

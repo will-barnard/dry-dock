@@ -472,7 +472,12 @@ async def handle_site_learning_result(
             if not fields:
                 job.status = "error"
                 job.error = "the proposed recipe matched nothing on the sample page"
-                job.result = {"proposed": proposed}
+                # Keep the evidence so the UI can show WHY: what the model
+                # proposed, and what structured data the page actually exposed.
+                job.result = {
+                    "proposed": proposed,
+                    "candidate_signal": extract_candidate_signal(job.sample_html or ""),
+                }
                 return
 
             # Save as a new active recipe version; deactivate the rest.

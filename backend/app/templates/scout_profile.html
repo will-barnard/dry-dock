@@ -69,6 +69,26 @@
         <div class="font-medium">Last attempt failed:</div>
         <pre class="log text-xs bg-rose-50 border border-rose-200 rounded p-2 mt-1">{{ latest_learning_job.error }}</pre>
       </div>
+      {% set res = latest_learning_job.result or {} %}
+      {% if res.get('proposed') %}
+        <details class="mt-2 text-xs">
+          <summary class="cursor-pointer text-slate-600">What the model proposed</summary>
+          <pre class="log text-xs bg-slate-50 border border-slate-100 rounded p-2 mt-1 whitespace-pre-wrap">{{ res.get('proposed') | tojson(indent=2) }}</pre>
+        </details>
+      {% endif %}
+      {% if res.get('candidate_signal') %}
+        <details class="mt-2 text-xs">
+          <summary class="cursor-pointer text-slate-600">What structured data the page actually exposed</summary>
+          <pre class="log text-xs bg-slate-50 border border-slate-100 rounded p-2 mt-1 whitespace-pre-wrap max-h-96 overflow-auto">{{ res.get('candidate_signal') }}</pre>
+        </details>
+        <p class="text-[11px] text-slate-500 mt-1">
+          If this box is empty or has no price/title, the page is rendering its
+          data with JavaScript — static fetch can't see it, and this site needs
+          the headless-browser path (Scout Phase C). If the data <em>is</em>
+          here but the model mapped the wrong paths, edit the recipe field map
+          below to match and Test fetch.
+        </p>
+      {% endif %}
     {% endif %}
   {% endif %}
 </section>

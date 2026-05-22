@@ -22,11 +22,35 @@ import httpx
 import structlog
 from bs4 import BeautifulSoup
 
+from app.config import get_settings
 from app.db import SessionLocal
 
 log = structlog.get_logger()
 
-USER_AGENT = "dry-dock-operator/0.1 (+https://github.com/; research assistant)"
+
+def _user_agent() -> str:
+    """The User-Agent we present. Defaults to a mainstream browser string —
+    an honest 'I am a bot' UA gets 403'd by Cloudflare-fronted sites like
+    Reverb. Override via WEB_FETCH_USER_AGENT if needed."""
+    return get_settings().web_fetch_user_agent
+
+
+def _browser_headers() -> dict[str, str]:
+    """Headers that mimic a real browser request. Many anti-bot layers gate
+    on the absence of these (Accept-Language especially)."""
+    return {
+        "User-Agent": _user_agent(),
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,*/*;q=0.8"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Upgrade-Insecure-Requests": "1",
+    }
 
 # Caps to keep one fetch bounded.
 _MAX_BYTES = 2_000_000          # don't slurp giant pages
@@ -67,7 +91,7 @@ async def _robots_allows(client: httpx.AsyncClient, url: str) -> bool:
     if rp is None:
         return True
     try:
-        return rp.can_fetch(USER_AGENT, url)
+        return rp.can_fetch(_user_agent(), url)
     except Exception:
         return True
 
@@ -136,7 +160,7 @@ async def fetch(url: str) -> str:
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return f"Refused to fetch '{url}': only http(s) URLs are supported."
 
-    headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
+    headers = _browser_headers()
     try:
         async with httpx.AsyncClient(
             timeout=_FETCH_TIMEOUT, follow_redirects=True, headers=headers

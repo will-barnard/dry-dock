@@ -77,6 +77,16 @@ class Settings(BaseSettings):
     web_search_timeout_seconds: float = Field(
         default=5.0, alias="WEB_SEARCH_TIMEOUT_SECONDS"
     )
+    # User-Agent for the fetch_url tool. Defaults to a mainstream browser
+    # string — an honest bot UA gets 403'd by Cloudflare-fronted sites.
+    web_fetch_user_agent: str = Field(
+        default=(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        alias="WEB_FETCH_USER_AGENT",
+    )
 
 
 @lru_cache(maxsize=1)

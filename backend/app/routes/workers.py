@@ -473,6 +473,11 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
                     await handle_tag_bullets_result(
                         msg.job_id, msg.success, msg.content, msg.error
                     )
+                elif msg.kind == "scout_learn":
+                    from app.orchestrator.scout import handle_site_learning_result
+                    await handle_site_learning_result(
+                        msg.job_id, msg.success, msg.content, msg.error
+                    )
                 else:
                     log.warning("worker.unknown_workbench_kind", kind=msg.kind)
 

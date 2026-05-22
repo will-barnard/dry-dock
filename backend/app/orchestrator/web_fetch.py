@@ -153,12 +153,13 @@ def _extract(html: str, url: str) -> str:
     return summary or "(the page returned no extractable text or structured data)"
 
 
-async def fetch(url: str) -> str:
-    """Fetch a URL and return a compact text summary, or a human-readable
-    error string (never raises — the tool layer wants a string either way)."""
+async def fetch_raw(url: str) -> tuple[str | None, str | None]:
+    """Fetch a URL and return (html_body, None) or (None, error_string).
+    Shared by fetch() and Scout's learning pipeline, which needs the raw HTML
+    to analyze and validate against — not the extracted summary."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        return f"Refused to fetch '{url}': only http(s) URLs are supported."
+        return None, f"Refused to fetch '{url}': only http(s) URLs are supported."
 
     headers = _browser_headers()
     try:
@@ -166,24 +167,32 @@ async def fetch(url: str) -> str:
             timeout=_FETCH_TIMEOUT, follow_redirects=True, headers=headers
         ) as client:
             if not await _robots_allows(client, url):
-                return f"robots.txt disallows fetching {url}."
+                return None, f"robots.txt disallows fetching {url}."
             await _rate_limit(parsed.netloc)
             resp = await client.get(url)
             resp.raise_for_status()
             ctype = resp.headers.get("content-type", "")
             if "html" not in ctype and "xml" not in ctype and "text" not in ctype:
-                return (
+                return None, (
                     f"Fetched {url} but its content-type is '{ctype}', not a "
-                    f"readable web page. Skipping."
+                    f"readable web page."
                 )
-            body = resp.text[:_MAX_BYTES]
+            return resp.text[:_MAX_BYTES], None
     except httpx.HTTPStatusError as exc:
-        return f"Fetch of {url} failed: HTTP {exc.response.status_code}."
+        return None, f"HTTP {exc.response.status_code}"
     except httpx.HTTPError as exc:
-        return f"Fetch of {url} failed: {exc}."
+        return None, str(exc)
     except Exception as exc:  # noqa: BLE001
         log.exception("web_fetch.unexpected", url=url[:200])
-        return f"Fetch of {url} failed: {exc}."
+        return None, str(exc)
+
+
+async def fetch(url: str) -> str:
+    """Fetch a URL and return a compact text summary, or a human-readable
+    error string (never raises — the tool layer wants a string either way)."""
+    body, error = await fetch_raw(url)
+    if body is None:
+        return f"Fetch of {url} failed: {error}."
 
     # Site-aware extraction (Scout): if this domain has an active recipe, try
     # it first for clean structured fields. Fall back to generic extraction

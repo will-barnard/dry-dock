@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block title %}{{ profile.display_name or profile.domain }} — Scout{% endblock %}
+{% block head %}
+  {% if latest_learning_job and latest_learning_job.status in ('pending', 'running') %}
+    <meta http-equiv="refresh" content="4">
+  {% endif %}
+{% endblock %}
 {% block content %}
 <nav class="text-sm text-slate-500 mb-4">
   <a href="/" class="hover:underline">Modules</a> /
@@ -20,6 +25,53 @@
     <button class="text-xs px-2 py-1 rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200">Delete</button>
   </form>
 </header>
+
+{# ── auto-learn ── #}
+<section class="bg-white border border-slate-200 rounded p-4 mb-6">
+  <div class="flex items-baseline justify-between">
+    <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600">Learn the recipe</h2>
+    {% if latest_learning_job %}
+      <span class="text-[10px] px-2 py-0.5 rounded
+        {% if latest_learning_job.status == 'done' %}bg-emerald-100 text-emerald-700
+        {% elif latest_learning_job.status == 'error' %}bg-rose-100 text-rose-700
+        {% else %}bg-amber-100 text-amber-700{% endif %}">
+        last: {{ latest_learning_job.status }}
+      </span>
+    {% endif %}
+  </div>
+  <p class="text-xs text-slate-500 mt-1">
+    Paste a representative page URL. A worker fetches it, figures out where the
+    fields live, writes the recipe, validates it against the page, and saves it
+    as the active recipe — no hand-editing.
+  </p>
+
+  {% if latest_learning_job and latest_learning_job.status in ('pending', 'running') %}
+    <div class="mt-3 text-sm text-amber-700 font-medium animate-pulse">
+      {{ 'Dispatching…' if latest_learning_job.status == 'pending' else 'Worker is analyzing the page…' }}
+    </div>
+    <p class="text-xs text-slate-500 mt-1">This page refreshes every few seconds.</p>
+  {% else %}
+    <form method="post" action="/scout/profiles/{{ profile.id }}/learn" class="mt-3 flex gap-2">
+      <input name="sample_url" required
+             value="{{ latest_learning_job.sample_url if latest_learning_job else '' }}"
+             placeholder="https://reverb.com/item/…"
+             class="flex-1 border border-slate-300 rounded px-2 py-1 font-mono text-xs">
+      <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded shrink-0">✦ Learn from this page</button>
+    </form>
+    {% if latest_learning_job and latest_learning_job.status == 'done' and latest_learning_job.result %}
+      <div class="mt-3 text-xs text-emerald-700">
+        Learned v{{ latest_learning_job.result.get('version') }}
+        ({{ latest_learning_job.result.get('strategy') }}) —
+        fields: {{ latest_learning_job.result.get('fields_found', []) | join(', ') }}
+      </div>
+    {% elif latest_learning_job and latest_learning_job.status == 'error' %}
+      <div class="mt-3 text-xs text-rose-700">
+        <div class="font-medium">Last attempt failed:</div>
+        <pre class="log text-xs bg-rose-50 border border-rose-200 rounded p-2 mt-1">{{ latest_learning_job.error }}</pre>
+      </div>
+    {% endif %}
+  {% endif %}
+</section>
 
 <section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
   {# ── recipe editor ── #}

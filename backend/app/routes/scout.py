@@ -21,6 +21,7 @@ from app.db import get_session
 from app.models import (
     ExtractionRecipe,
     ExtractionStrategy,
+    SiteLearningJob,
     SiteProfile,
     SiteProfileStatus,
     User,
@@ -82,6 +83,32 @@ async def add_profile(
     return RedirectResponse(f"/scout/profiles/{profile.id}", status_code=303)
 
 
+async def _latest_learning_job(
+    session: AsyncSession, profile_id: uuid.UUID
+) -> SiteLearningJob | None:
+    return (await session.execute(
+        select(SiteLearningJob)
+        .where(SiteLearningJob.site_profile_id == profile_id)
+        .order_by(desc(SiteLearningJob.created_at))
+        .limit(1)
+    )).scalars().first()
+
+
+async def _profile_context(session: AsyncSession, user: User, profile: SiteProfile, **extra) -> dict:
+    recipes = sorted(profile.recipes, key=lambda r: r.version, reverse=True)
+    active = next((r for r in recipes if r.active), None)
+    ctx = {
+        "user": user,
+        "profile": profile,
+        "recipes": recipes,
+        "active": active,
+        "strategies": [s.value for s in ExtractionStrategy],
+        "latest_learning_job": await _latest_learning_job(session, profile.id),
+    }
+    ctx.update(extra)
+    return ctx
+
+
 @router.get("/scout/profiles/{profile_id}", response_class=HTMLResponse, response_model=None)
 async def profile_detail(
     request: Request,
@@ -92,19 +119,42 @@ async def profile_detail(
     profile = await session.get(SiteProfile, profile_id)
     if not profile:
         raise HTTPException(404, "profile not found")
-    recipes = sorted(profile.recipes, key=lambda r: r.version, reverse=True)
-    active = next((r for r in recipes if r.active), None)
     return templates.TemplateResponse(
-        request,
-        "scout_profile.html",
-        {
-            "user": user,
-            "profile": profile,
-            "recipes": recipes,
-            "active": active,
-            "strategies": [s.value for s in ExtractionStrategy],
-        },
+        request, "scout_profile.html",
+        await _profile_context(session, user, profile),
     )
+
+
+@router.post("/scout/profiles/{profile_id}/learn", response_class=HTMLResponse, response_model=None)
+async def learn_recipe(
+    profile_id: uuid.UUID,
+    sample_url: str = Form(...),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> RedirectResponse:
+    """Queue an agent-assisted learning job: fetch the sample page, have a
+    worker propose a recipe, validate it, and save it as the active recipe."""
+    profile = await session.get(SiteProfile, profile_id)
+    if not profile:
+        raise HTTPException(404, "profile not found")
+    url = sample_url.strip()
+    if not url:
+        raise HTTPException(400, "a sample URL is required")
+
+    job = SiteLearningJob(site_profile_id=profile_id, status="pending", sample_url=url)
+    profile.status = SiteProfileStatus.LEARNING
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+
+    err = await scout.dispatch_site_learning(job.id)
+    if err:
+        async with session.begin():
+            j = await session.get(SiteLearningJob, job.id)
+            if j:
+                j.status = "error"
+                j.error = err
+    return RedirectResponse(f"/scout/profiles/{profile_id}", status_code=303)
 
 
 @router.post("/scout/recipes/{recipe_id}", response_class=HTMLResponse, response_model=None)
@@ -151,20 +201,12 @@ async def test_fetch(
     # Run the real fetch path — this exercises the active recipe exactly as
     # the Operator's fetch_url tool would.
     result = await web_fetch.fetch(url.strip())
-    recipes = sorted(profile.recipes, key=lambda r: r.version, reverse=True)
-    active = next((r for r in recipes if r.active), None)
     return templates.TemplateResponse(
         request,
         "scout_profile.html",
-        {
-            "user": user,
-            "profile": profile,
-            "recipes": recipes,
-            "active": active,
-            "strategies": [s.value for s in ExtractionStrategy],
-            "test_url": url.strip(),
-            "test_result": result,
-        },
+        await _profile_context(
+            session, user, profile, test_url=url.strip(), test_result=result,
+        ),
     )
 
 

@@ -131,21 +131,31 @@ async def learn_recipe(
     profile_id: uuid.UUID,
     sample_url: str = Form(...),
     use_browser: str = Form(""),
+    url_pattern: str = Form(""),
+    page_type: str = Form("listing"),
+    result_shape: str = Form("single"),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
-    """Queue an agent-assisted learning job: fetch the sample page, have a
-    worker propose a recipe, validate it, and save it as the active recipe."""
+    """Queue an agent-assisted learning job for a specific blueprint (page type
+    + URL pattern + shape): fetch the sample page, have a worker propose a
+    recipe, validate it, and save it as an active blueprint."""
     profile = await session.get(SiteProfile, profile_id)
     if not profile:
         raise HTTPException(404, "profile not found")
     url = sample_url.strip()
     if not url:
         raise HTTPException(400, "a sample URL is required")
+    shape = result_shape.strip().lower()
+    if shape not in ("single", "list"):
+        shape = "single"
 
     job = SiteLearningJob(
         site_profile_id=profile_id, status="running", sample_url=url,
         use_browser=bool(use_browser.strip()),
+        url_pattern=(url_pattern.strip() or None),
+        page_type=(page_type.strip() or "listing"),
+        result_shape=shape,
     )
     profile.status = SiteProfileStatus.LEARNING
     session.add(job)
@@ -165,6 +175,11 @@ async def edit_recipe(
     strategy: str = Form(...),
     field_map: str = Form("{}"),
     needs_js: str = Form(""),
+    url_pattern: str = Form(""),
+    page_type: str = Form("listing"),
+    result_shape: str = Form("single"),
+    list_item_selector: str = Form(""),
+    active: str = Form(""),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> RedirectResponse:
@@ -183,6 +198,12 @@ async def edit_recipe(
         raise HTTPException(400, f"unknown strategy: {strategy}")
     recipe.field_map = parsed_map
     recipe.needs_js = bool(needs_js.strip())
+    recipe.url_pattern = url_pattern.strip() or None
+    recipe.page_type = page_type.strip() or "listing"
+    shape = result_shape.strip().lower()
+    recipe.result_shape = shape if shape in ("single", "list") else "single"
+    recipe.list_item_selector = list_item_selector.strip() or None
+    recipe.active = bool(active.strip())
     await session.commit()
     return RedirectResponse(
         f"/scout/profiles/{recipe.site_profile_id}", status_code=303

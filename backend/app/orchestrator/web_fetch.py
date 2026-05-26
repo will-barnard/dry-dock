@@ -232,7 +232,7 @@ async def fetch(url: str) -> str:
     if domain:
         try:
             async with SessionLocal() as session:
-                hit = await scout.active_recipe_for_domain(session, domain)
+                hit = await scout.recipe_for_url(session, domain, url)
         except Exception:
             log.exception("web_fetch.recipe_lookup_failed", domain=domain)
     render = bool(hit and hit[1].needs_js)
@@ -241,12 +241,12 @@ async def fetch(url: str) -> str:
     if body is None:
         return f"Fetch of {url} failed: {error}."
 
-    # Site-aware extraction: apply the active recipe if we have one.
+    # Site-aware extraction: apply the routed blueprint if we have one.
     if hit is not None:
         try:
             _profile, recipe = hit
             fields = scout.apply_recipe(body, recipe)
-            if fields:
+            if scout.recipe_has_data(fields):
                 await scout.record_outcome(recipe.id, success=True)
                 structured = scout.format_fields(domain, url, fields)
                 return f"{structured}\n\n---\n{_extract(body, url)[:2000]}"

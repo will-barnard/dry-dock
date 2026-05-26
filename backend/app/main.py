@@ -56,6 +56,14 @@ _INLINE_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS search_site VARCHAR(255)",
     # Scout Phase C: opt-in headless rendering for a learning job.
     "ALTER TABLE site_learning_jobs ADD COLUMN IF NOT EXISTS use_browser BOOLEAN NOT NULL DEFAULT FALSE",
+    # Scout multi-blueprint: URL-pattern routing + list extraction.
+    "ALTER TABLE extraction_recipes ADD COLUMN IF NOT EXISTS url_pattern VARCHAR(255)",
+    "ALTER TABLE extraction_recipes ADD COLUMN IF NOT EXISTS page_type VARCHAR(32) NOT NULL DEFAULT 'listing'",
+    "ALTER TABLE extraction_recipes ADD COLUMN IF NOT EXISTS result_shape VARCHAR(16) NOT NULL DEFAULT 'single'",
+    "ALTER TABLE extraction_recipes ADD COLUMN IF NOT EXISTS list_item_selector VARCHAR(255)",
+    "ALTER TABLE site_learning_jobs ADD COLUMN IF NOT EXISTS url_pattern VARCHAR(255)",
+    "ALTER TABLE site_learning_jobs ADD COLUMN IF NOT EXISTS page_type VARCHAR(32) NOT NULL DEFAULT 'listing'",
+    "ALTER TABLE site_learning_jobs ADD COLUMN IF NOT EXISTS result_shape VARCHAR(16) NOT NULL DEFAULT 'single'",
     # Temp accounts (12-hour token login)
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_temp BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS temp_token VARCHAR(64)",

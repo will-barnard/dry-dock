@@ -623,6 +623,18 @@ class ExtractionRecipe(Base):
         Enum(ExtractionStrategy, name="extraction_strategy"),
         default=ExtractionStrategy.JSONLD,
     )
+    # ── blueprint routing ──
+    # URL pattern this blueprint applies to (substring, or glob if it contains
+    # '*'), matched against the full URL. Null = fallback (matches anything).
+    # Multiple blueprints can be active per profile, one per page type.
+    url_pattern: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Human label for the page type: "listing" | "comparison" | "search" | ...
+    page_type: Mapped[str] = mapped_column(String(32), default="listing")
+    # "single" → one record (field_map: field → locator)
+    # "list"   → many records: list_item_selector finds each row, and
+    #            field_map values are selectors RELATIVE to each row.
+    result_shape: Mapped[str] = mapped_column(String(16), default="single")
+    list_item_selector: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # field name → location, interpreted per strategy:
     #   jsonld / embedded_json: a dotted path ("offers.price")
     #   selectors:             a CSS selector ("span.price")
@@ -660,6 +672,11 @@ class SiteLearningJob(Base):
     # Whether to render the sample page through the headless browser (Phase C)
     # before analyzing it. Set from the Learn form's checkbox.
     use_browser: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The blueprint intent the user is teaching, carried through to the saved
+    # recipe.
+    url_pattern: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    page_type: Mapped[str] = mapped_column(String(32), default="listing")
+    result_shape: Mapped[str] = mapped_column(String(16), default="single")
     # Raw HTML stashed so the result handler can validate the proposed recipe
     # against the exact page the model analyzed (no re-fetch / drift).
     sample_html: Mapped[str | None] = mapped_column(Text, nullable=True)

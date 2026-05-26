@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -170,11 +171,35 @@ def _css_hint(el) -> str:
 
 
 def apply_recipe(html: str, recipe: ExtractionRecipe) -> dict[str, Any]:
-    """Apply a recipe to page HTML and return whatever structured fields it
-    resolves. Empty dict means the recipe matched nothing (caller should fall
+    """Apply a recipe to page HTML and return whatever it resolves.
+
+    Single shape → {field: value, ...}.
+    List shape   → {"items": [{field: value, ...}, ...]}.
+    Empty dict / empty items means the recipe matched nothing (caller falls
     back to generic extraction)."""
     soup = BeautifulSoup(html, "html.parser")
     field_map: dict[str, str] = recipe.field_map or {}
+
+    # ── list shape: many rows via a repeating item selector ──
+    if getattr(recipe, "result_shape", "single") == "list":
+        item_sel = getattr(recipe, "list_item_selector", None)
+        if not item_sel:
+            return {"items": []}
+        try:
+            rows = soup.select(item_sel)
+        except Exception:
+            rows = []
+        items: list[dict] = []
+        for row in rows:
+            rec: dict[str, Any] = {}
+            for field, sel in field_map.items():
+                val = _apply_selector(row, sel)
+                if val:
+                    rec[field] = val
+            if rec:
+                items.append(rec)
+        return {"items": items}
+
     out: dict[str, Any] = {}
 
     if recipe.strategy == ExtractionStrategy.JSONLD:
@@ -214,35 +239,100 @@ def apply_recipe(html: str, recipe: ExtractionRecipe) -> dict[str, Any]:
     return {k: (v if isinstance(v, (str, int, float)) else json.dumps(v)) for k, v in out.items()}
 
 
+_PRICE_NUM_RE = re.compile(r"\d[\d,]*(?:\.\d{1,2})?")
+
+
+def _price_to_float(text: Any) -> float | None:
+    m = _PRICE_NUM_RE.search(str(text or ""))
+    if not m:
+        return None
+    try:
+        return float(m.group(0).replace(",", ""))
+    except ValueError:
+        return None
+
+
 def format_fields(domain: str, url: str, fields: dict[str, Any]) -> str:
-    """Render extracted fields as a compact block for the model."""
+    """Render extracted data as a compact block for the model. Handles both
+    the single-record shape and the list shape (with a price-range summary)."""
+    # ── list shape ──
+    if isinstance(fields, dict) and "items" in fields:
+        items = fields.get("items") or []
+        lines = [f"Fetched via {domain} recipe (list, {len(items)} items): {url}", ""]
+        prices = [p for p in (_price_to_float(it.get("price")) for it in items) if p is not None]
+        if prices:
+            lines.append(
+                f"Price range: ${min(prices):,.0f} – ${max(prices):,.0f} "
+                f"(median ${sorted(prices)[len(prices)//2]:,.0f}, {len(prices)} priced)"
+            )
+            lines.append("")
+        for i, it in enumerate(items[:40], 1):
+            bits = [str(it[k]) for k in ("title", "price", "condition") if it.get(k)]
+            extra = " | ".join(f"{k}={v}" for k, v in it.items()
+                                if k not in ("title", "price", "condition"))
+            line = f"{i}. " + " — ".join(bits)
+            if extra:
+                line += f"  ({extra})"
+            lines.append(line)
+        return "\n".join(lines)
+
+    # ── single shape ──
     lines = [f"Fetched via {domain} recipe: {url}", ""]
     for key in KNOWN_FIELDS:
         if key in fields:
             lines.append(f"{key}: {fields[key]}")
-    # Include any extra fields the recipe defined beyond the known set.
     for key, val in fields.items():
         if key not in KNOWN_FIELDS:
             lines.append(f"{key}: {val}")
     return "\n".join(lines)
 
 
+def recipe_has_data(fields: dict[str, Any]) -> bool:
+    """True if an apply_recipe result actually extracted something."""
+    if isinstance(fields, dict) and "items" in fields:
+        return bool(fields.get("items"))
+    return bool(fields)
+
+
+def _url_matches(pattern: str | None, url: str) -> bool:
+    """A blueprint's url_pattern matches if it's a substring of the URL, or —
+    when it contains '*' — an fnmatch glob over the URL."""
+    if not pattern:
+        return False
+    if "*" in pattern:
+        import fnmatch
+        return fnmatch.fnmatch(url, pattern) or fnmatch.fnmatch(url, f"*{pattern}*")
+    return pattern in url
+
+
 # ── lookup ──────────────────────────────────────────────────────────
 
 
-async def active_recipe_for_domain(
-    session: AsyncSession, domain: str
+async def recipe_for_url(
+    session: AsyncSession, domain: str, url: str
 ) -> tuple[SiteProfile, ExtractionRecipe] | None:
-    """Return (profile, active_recipe) for a domain, or None."""
+    """Pick the active blueprint for a URL. Among a profile's active recipes,
+    prefer the one whose url_pattern matches (most specific = longest pattern
+    wins); a pattern-less active recipe is the fallback. Returns None if the
+    domain is unknown or has no usable blueprint."""
     profile = (await session.execute(
         select(SiteProfile).where(SiteProfile.domain == domain)
     )).scalars().first()
     if profile is None:
         return None
-    recipe = next((r for r in profile.recipes if r.active), None)
-    if recipe is None:
+    active = [r for r in profile.recipes if r.active]
+    if not active:
         return None
-    return profile, recipe
+    # Patterned matches, longest pattern first.
+    matched = [r for r in active if _url_matches(r.url_pattern, url)]
+    if matched:
+        matched.sort(key=lambda r: len(r.url_pattern or ""), reverse=True)
+        return profile, matched[0]
+    # Fallback: an active recipe with no pattern.
+    fallback = next((r for r in active if not r.url_pattern), None)
+    if fallback is not None:
+        return profile, fallback
+    return None
 
 
 async def record_outcome(recipe_id, *, success: bool) -> None:
@@ -302,6 +392,9 @@ async def seed_reverb_profile() -> None:
                 version=1,
                 strategy=ExtractionStrategy.JSONLD,
                 field_map=_REVERB_FIELD_MAP,
+                url_pattern="/item/",
+                page_type="listing",
+                result_shape="single",
                 search_strategy={
                     "type": "url",
                     "pattern": "https://reverb.com/marketplace?query={q}",
@@ -328,12 +421,26 @@ found on a sample page, output a JSON recipe describing how to extract these
 fields when present: title, price, currency, condition, year, seller, url,
 description. Include ONLY fields you can actually locate in the data provided.
 
-Pick a strategy:
-- "jsonld": data is in a JSON-LD object. field_map values are dotted paths INTO
-  that object, e.g. "offers.price" or "name". A list step takes its first item.
-- "embedded_json": data is in an embedded JSON blob (e.g. __NEXT_DATA__).
+Pick the strategy based on WHERE the data actually is in the input:
+- "jsonld": ONLY if a JSON-LD object actually contains the target fields
+  (e.g. a "@type":"Product" with an "offers.price"). field_map values are
+  dotted paths into that object. A JSON-LD object of @type "WebSite" or
+  "Organization" is site chrome — it does NOT contain a listing price, so do
+  NOT pick jsonld just because some JSON-LD exists.
+- "embedded_json": the data is in an embedded JSON blob (e.g. __NEXT_DATA__);
   field_map values are dotted paths into it.
-- "selectors": last resort — field_map values are CSS selectors.
+- "selectors": use this when the price/title live in plain DOM elements (no
+  Product JSON-LD). Take selectors from the "PRICE-LIKE ELEMENTS" section
+  provided — each line is `css_selector :: text`. Choose the selector whose
+  text is the page's MAIN listing price; prefer a specific price-block
+  selector (e.g. div.rc-price-block__price) over a generic one that repeats
+  across many listings (e.g. a bare span.price-display). You may append
+  `::text` to a selector to take its text. Map title from the page's main
+  heading selector.
+
+Decision rule: if no JSON-LD object holds the price, you MUST use "selectors"
+(or "embedded_json" if the value is in the blob) — never fall back to a
+jsonld recipe whose paths don't exist.
 
 Output ONLY a single JSON object in a ```json code block:
 
@@ -344,6 +451,34 @@ Output ONLY a single JSON object in a ```json code block:
 ```
 
 Map a field only if you can see where its value lives in the provided data.
+"""
+
+
+_LEARN_SYSTEM_LIST = """\
+You configure a LIST extraction recipe for a page that shows MANY items (a
+search-results or price-comparison page). Output a JSON recipe that extracts
+EVERY item as a row.
+
+Steps:
+- Choose `item_selector` from the "REPEATING CONTAINERS" section — the CSS
+  selector matching each item/row. Its count should be close to the number of
+  listings on the page (not 1, and not hundreds).
+- Map per-item fields with selectors RELATIVE to a single row, using the
+  classes you see in PRICE-LIKE ELEMENTS. Always capture `price`; also
+  `title`, `condition`, `url` where present.
+- You may append `::text` to take an element's text, or `::attr(href)` to take
+  a link attribute.
+
+Output ONLY a single JSON object in a ```json code block:
+
+```json
+{"result_shape": "list",
+ "item_selector": "div.listing-row",
+ "field_map": {"title": "a.listing-title::text", "price": "span.price-display::text", "url": "a.listing-title::attr(href)"},
+ "needs_js": true}
+```
+
+Pick item_selector and field selectors only from what you can see in the data.
 """
 
 
@@ -407,6 +542,27 @@ def extract_candidate_signal(html: str) -> str:
             + "\n".join(price_hits)
         )
 
+    # Repeating containers: ancestor selectors of price nodes that recur many
+    # times — candidate item_selector values for a 'list' recipe. The one whose
+    # count ≈ number of listings is usually the row container.
+    container_counts: Counter = Counter()
+    for node in body.find_all(string=price_re):
+        el = node.parent
+        depth = 0
+        while el is not None and depth < 6:
+            classes = [c for c in (el.get("class") or []) if c][:2]
+            if classes:
+                container_counts[el.name + "".join(f".{c}" for c in classes)] += 1
+            el = el.parent
+            depth += 1
+    repeating = [(sel, n) for sel, n in container_counts.most_common(12) if n >= 3]
+    if repeating:
+        parts.append(
+            "REPEATING CONTAINERS (css_selector :: count) — for a 'list' recipe, "
+            "pick item_selector whose count ≈ the number of listings on the page:\n"
+            + "\n".join(f"{sel} :: {n}" for sel, n in repeating)
+        )
+
     visible = " ".join(body.get_text(" ").split())
     if visible:
         parts.append("VISIBLE TEXT SAMPLE:\n" + visible[:2500])
@@ -414,15 +570,24 @@ def extract_candidate_signal(html: str) -> str:
     return "\n\n".join(parts)[:14000] or "(no structured data found on the page)"
 
 
-def build_learn_messages(domain: str, signal: str) -> list[dict[str, str]]:
+def build_learn_messages(
+    domain: str, signal: str, result_shape: str = "single"
+) -> list[dict[str, str]]:
+    system = _LEARN_SYSTEM_LIST if result_shape == "list" else _LEARN_SYSTEM
+    shape_note = (
+        "This page is a LIST page (many items) — produce a list recipe."
+        if result_shape == "list"
+        else "This page is a SINGLE-item page — produce a single-record recipe."
+    )
     user = (
         f"## Site\n{domain}\n\n"
+        f"## Page kind\n{shape_note}\n\n"
         f"## Structured data found on the sample page\n{signal}\n\n"
         f"## Task\nProduce the extraction recipe JSON per the rules. "
         f"Output only the JSON object."
     )
     return [
-        {"role": "system", "content": _LEARN_SYSTEM},
+        {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
 
@@ -468,13 +633,14 @@ async def dispatch_site_learning(job_id: uuid.UUID) -> str | None:
         domain = profile.domain if profile else ""
         url = job.sample_url
         use_browser = bool(job.use_browser)
+        result_shape = getattr(job, "result_shape", None) or "single"
 
     html, error = await web_fetch.fetch_raw(url, render=use_browser)
     if html is None:
         return f"could not fetch the sample page: {error}"
 
     signal = extract_candidate_signal(html)
-    messages = build_learn_messages(domain, signal)
+    messages = build_learn_messages(domain, signal, result_shape=result_shape)
 
     async with SessionLocal() as session:
         async with session.begin():
@@ -550,10 +716,9 @@ async def handle_site_learning_result(
                 job.result = {"raw": (content or "")[:4000]}
                 return
 
-            try:
-                strategy = ExtractionStrategy(str(proposed.get("strategy") or "jsonld"))
-            except ValueError:
-                strategy = ExtractionStrategy.JSONLD
+            shape = str(
+                proposed.get("result_shape") or getattr(job, "result_shape", None) or "single"
+            )
             field_map = proposed.get("field_map")
             if not isinstance(field_map, dict) or not field_map:
                 job.status = "error"
@@ -561,21 +726,43 @@ async def handle_site_learning_result(
                 job.result = {"proposed": proposed}
                 return
 
+            list_item_selector = None
+            if shape == "list":
+                # List recipes are selector-based over a repeating row.
+                strategy = ExtractionStrategy.SELECTORS
+                list_item_selector = proposed.get("item_selector")
+                if not list_item_selector:
+                    job.status = "error"
+                    job.error = "list recipe is missing item_selector"
+                    job.result = {"proposed": proposed}
+                    return
+            else:
+                try:
+                    strategy = ExtractionStrategy(str(proposed.get("strategy") or "jsonld"))
+                except ValueError:
+                    strategy = ExtractionStrategy.JSONLD
+
             # Validate against the exact page the model analyzed.
-            transient = SimpleNamespace(strategy=strategy, field_map=field_map)
+            transient = SimpleNamespace(
+                strategy=strategy, field_map=field_map,
+                result_shape=shape, list_item_selector=list_item_selector,
+            )
             fields = apply_recipe(job.sample_html or "", transient)
-            if not fields:
+            if not recipe_has_data(fields):
                 job.status = "error"
                 job.error = "the proposed recipe matched nothing on the sample page"
-                # Keep the evidence so the UI can show WHY: what the model
-                # proposed, and what structured data the page actually exposed.
                 job.result = {
                     "proposed": proposed,
                     "candidate_signal": extract_candidate_signal(job.sample_html or ""),
                 }
                 return
 
-            # Save as a new active recipe version; deactivate the rest.
+            url_pattern = getattr(job, "url_pattern", None) or None
+            page_type = getattr(job, "page_type", None) or "listing"
+
+            # Save as a new blueprint version. Deactivate only blueprints with
+            # the SAME url_pattern (re-learning that page type) so different
+            # page types coexist as separate active blueprints.
             recipes = (await session.execute(
                 select(ExtractionRecipe).where(
                     ExtractionRecipe.site_profile_id == job.site_profile_id
@@ -583,17 +770,27 @@ async def handle_site_learning_result(
             )).scalars().all()
             next_version = max((r.version for r in recipes), default=0) + 1
             for r in recipes:
-                r.active = False
-            # If we needed the browser to read this page, the recipe needs it
-            # at runtime too — flag needs_js regardless of the model's claim.
+                if (r.url_pattern or None) == url_pattern:
+                    r.active = False
             needs_js = bool(job.use_browser) or bool(proposed.get("needs_js"))
+            if shape == "list":
+                n_found = len(fields.get("items") or [])
+                confidence = min(1.0, n_found / 5.0)
+                fields_found = [f"{n_found} items"]
+            else:
+                confidence = min(1.0, len(fields) / 6.0)
+                fields_found = list(fields.keys())
             session.add(ExtractionRecipe(
                 site_profile_id=job.site_profile_id,
                 version=next_version,
                 strategy=strategy,
                 field_map=field_map,
+                url_pattern=url_pattern,
+                page_type=page_type,
+                result_shape=shape,
+                list_item_selector=list_item_selector,
                 needs_js=needs_js,
-                confidence=min(1.0, len(fields) / 6.0),
+                confidence=confidence,
                 active=True,
                 last_validated_at=datetime.now(timezone.utc),
             ))
@@ -604,7 +801,8 @@ async def handle_site_learning_result(
             job.result = {
                 "version": next_version,
                 "strategy": strategy.value,
-                "fields_found": list(fields.keys()),
+                "result_shape": shape,
+                "fields_found": fields_found,
                 "sample": fields,
             }
     log.info("scout.learn_result_applied", job=str(job_id))

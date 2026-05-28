@@ -119,17 +119,47 @@ def _find_embedded_json(soup: BeautifulSoup) -> dict | None:
     return None
 
 
-_SELECTOR_ATTR_RE = re.compile(r"::attr\(([^)]+)\)\s*$")
+_SELECTOR_ATTR_RE = re.compile(r"::attr\(\s*([\w-]+)\s*\)\s*$")
 _SELECTOR_TEXT_RE = re.compile(r"::text\s*$")
 
 
+def _normalize_selector(raw: str) -> str:
+    """Normalize the dozen syntactic variants models emit for the same
+    selector. Canonicalize to `<css>` or `<css>::text` or `<css>::attr(name)`.
+
+    Examples handled:
+        "span.year :: text"            → "span.year::text"
+        "h1[itemprop='name']:: text"   → "h1[itemprop='name']::text"
+        "meta[property='og:url']@attr['content']" → "meta[property='og:url']::attr(content)"
+        "a.link:attr(href)"            → "a.link::attr(href)"
+        "div.x ::attr( content )"      → "div.x::attr(content)"
+    """
+    s = raw.strip()
+    # `@attr['x']` / `@attr[x]` / `@attr("x")` → `::attr(x)`
+    s = re.sub(
+        r"@attr\s*\[\s*[\"']?([\w-]+)[\"']?\s*\]", r"::attr(\1)", s
+    )
+    s = re.sub(
+        r"@attr\s*\(\s*[\"']?([\w-]+)[\"']?\s*\)", r"::attr(\1)", s
+    )
+    # Single-colon `:attr(x)` → `::attr(x)`. Negative-lookbehind to avoid
+    # touching an already-double-colon form.
+    s = re.sub(r"(?<!:):attr\(", "::attr(", s)
+    # Collapse whitespace around `::` (" :: text" → "::text").
+    s = re.sub(r"\s*::\s*", "::", s)
+    # Tighten whitespace inside ::attr(...).
+    s = re.sub(r"::attr\(\s*([\w-]+)\s*\)", r"::attr(\1)", s)
+    # A trailing bare " text" word after a CSS selector means "::text".
+    s = re.sub(r"\s+text\s*$", "::text", s) if not s.endswith("::text") else s
+    return s.strip()
+
+
 def _apply_selector(soup: BeautifulSoup, raw_selector: str) -> str | None:
-    """Resolve one CSS selector against the page. Tolerates Scrapy-style
-    `::text` and `::attr(name)` suffixes that models love to emit but
-    soupsieve can't parse."""
+    """Resolve one selector against the page, tolerant of the syntactic
+    variants models commonly emit (see _normalize_selector)."""
     if not isinstance(raw_selector, str) or not raw_selector.strip():
         return None
-    selector = raw_selector.strip()
+    selector = _normalize_selector(raw_selector)
     attr: str | None = None
     m = _SELECTOR_ATTR_RE.search(selector)
     if m:
@@ -434,9 +464,18 @@ Pick the strategy based on WHERE the data actually is in the input:
   provided — each line is `css_selector :: text`. Choose the selector whose
   text is the page's MAIN listing price; prefer a specific price-block
   selector (e.g. div.rc-price-block__price) over a generic one that repeats
-  across many listings (e.g. a bare span.price-display). You may append
-  `::text` to a selector to take its text. Map title from the page's main
-  heading selector.
+  across many listings (e.g. a bare span.price-display). Map title from the
+  page's main heading selector.
+
+  Selector suffix syntax — these are the ONLY two forms accepted:
+    - `<css>::text`             → take the element's text content
+    - `<css>::attr(name)`       → take the value of an attribute
+  No spaces around `::`. Do NOT write `:: text`, `@attr['x']`, `:attr(x)`,
+  or anything else. Examples:
+    "title":  "h1.listing-title::text"
+    "url":    "meta[property='og:url']::attr(content)"
+    "price":  "div.rc-price-block__price::text"
+  Plain CSS without a suffix also works and takes the element's text.
 
 Decision rule: if no JSON-LD object holds the price, you MUST use "selectors"
 (or "embedded_json" if the value is in the blob) — never fall back to a
@@ -466,8 +505,12 @@ Steps:
 - Map per-item fields with selectors RELATIVE to a single row, using the
   classes you see in PRICE-LIKE ELEMENTS. Always capture `price`; also
   `title`, `condition`, `url` where present.
-- You may append `::text` to take an element's text, or `::attr(href)` to take
-  a link attribute.
+- Selector suffix syntax — ONLY these two forms are accepted, with NO spaces
+  around `::`:
+    - `<css>::text`             → element text
+    - `<css>::attr(name)`       → attribute value
+  Do NOT write `:: text`, `@attr['x']`, `:attr(x)`, etc. Plain CSS with no
+  suffix also works and takes the element's text.
 
 Output ONLY a single JSON object in a ```json code block:
 

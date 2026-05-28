@@ -499,12 +499,14 @@ search-results or price-comparison page). Output a JSON recipe that extracts
 EVERY item as a row.
 
 Steps:
-- Choose `item_selector` from the "REPEATING CONTAINERS" section — the CSS
-  selector matching each item/row. Its count should be close to the number of
-  listings on the page (not 1, and not hundreds).
-- Map per-item fields with selectors RELATIVE to a single row, using the
-  classes you see in PRICE-LIKE ELEMENTS. Always capture `price`; also
-  `title`, `condition`, `url` where present.
+- Choose `item_selector` from "REPEATING CONTAINERS" — the CSS selector
+  matching each item/row. Its count should be close to the number of listings
+  on the page (not 1, and not hundreds).
+- Map per-item fields using the "ROW ANATOMY" section, which shows the
+  descendants of one row. Use those selectors VERBATIM — DO NOT change tag
+  names (if anatomy shows `div.foo`, use `div.foo`, not `span.foo`). Do not
+  invent selectors that don't appear in anatomy.
+- Always capture `price`; also `title`, `condition`, `url` where shown.
 - Selector suffix syntax — ONLY these two forms are accepted, with NO spaces
   around `::`:
     - `<css>::text`             → element text
@@ -605,6 +607,56 @@ def extract_candidate_signal(html: str) -> str:
             "pick item_selector whose count ≈ the number of listings on the page:\n"
             + "\n".join(f"{sel} :: {n}" for sel, n in repeating)
         )
+
+        # ROW ANATOMY: the *inside* of a single repeating container, so the
+        # model can write accurate relative selectors for title/price/url
+        # instead of inventing tag names it never saw. Pick the highest-count
+        # candidate whose sample has substantive structure — the topmost
+        # repeating selector is often the price LEAF (no children), not the
+        # row.
+        chosen_sel = None
+        sample = None
+        for sel, _count in repeating[:8]:
+            try:
+                s = body.select_one(sel)
+            except Exception:
+                s = None
+            if s is None:
+                continue
+            classed_descendants = sum(
+                1 for el in s.find_all(True) if (el.get("class") or [])
+            )
+            if classed_descendants >= 4:
+                chosen_sel, sample = sel, s
+                break
+        if sample is None and repeating:
+            chosen_sel = repeating[0][0]
+            try:
+                sample = body.select_one(chosen_sel)
+            except Exception:
+                sample = None
+        top_sel = chosen_sel
+        if sample is not None:
+            anatomy: list[str] = []
+            for el in sample.find_all(True):
+                classes = [c for c in (el.get("class") or []) if c][:3]
+                if not classes:
+                    continue
+                sel = el.name + "".join(f".{c}" for c in classes)
+                text = " ".join(el.get_text(" ", strip=True).split())[:80]
+                href = el.get("href")
+                if text:
+                    anatomy.append(f"{sel}::text  →  {text}")
+                elif href:
+                    anatomy.append(f"{sel}::attr(href)  →  {str(href)[:80]}")
+                if len(anatomy) >= 35:
+                    break
+            if anatomy:
+                parts.append(
+                    f"ROW ANATOMY for one '{top_sel}' (these are RELATIVE "
+                    f"selectors inside item_selector — use them verbatim, "
+                    f"matching tag names EXACTLY):\n" + "\n".join(anatomy)
+                )
 
     visible = " ".join(body.get_text(" ").split())
     if visible:

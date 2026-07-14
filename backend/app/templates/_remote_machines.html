@@ -33,7 +33,7 @@
               hx-post="/machines/{{ m.name }}/wake"
               hx-target="#remote-machines"
               hx-swap="outerHTML"
-              hx-disabled-elt="this button"
+              hx-disabled-elt="find button"
               class="m-0">
               <button
                 {% if m.online %}disabled{% endif %}
@@ -48,7 +48,7 @@
               hx-target="#remote-machines"
               hx-swap="outerHTML"
               hx-confirm="Shut down {{ m.display_name }}?"
-              hx-disabled-elt="this button"
+              hx-disabled-elt="find button"
               class="m-0">
               <button
                 {% if not m.online or not m.ssh_host %}disabled{% endif %}

@@ -61,6 +61,7 @@ from app.orchestrator.protocol import (
     WelcomeMsg,
     WorkbenchResultMsg,
 )
+from app.orchestrator.generate import fail_generate_jobs, resolve_generate
 from app.orchestrator.workbench_jobs import (
     fail_jobs_on_worker_disconnect,
     handle_cover_letter_result,
@@ -452,8 +453,13 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
                 # Clear in-flight tracking so the disconnect path doesn't try
                 # to fail an already-completed job if the socket drops next.
                 live.current_workbench_jobs.discard(msg.job_id)
+                # Generate-API jobs are correlated to a waiting HTTP request via
+                # an in-memory Future rather than a DB handler. resolve_generate
+                # returns True if it owned this job_id, so we stop here.
+                if resolve_generate(msg.job_id, msg.success, msg.content, msg.error):
+                    pass
                 # One handler per Workbench job kind.
-                if msg.kind == "import":
+                elif msg.kind == "import":
                     await handle_import_result(
                         msg.job_id, msg.success, msg.content, msg.error
                     )
@@ -504,9 +510,15 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
         # don't have a retry path like Tasks do, so the safest thing is to
         # surface ERROR so the user knows the job died and can retry.
         if live.current_workbench_jobs:
+            stranded = set(live.current_workbench_jobs)
+            # Reject any waiting generate-API HTTP requests first (in-memory
+            # futures — no DB row). Non-generate ids are ignored here.
             try:
-                await fail_jobs_on_worker_disconnect(
-                    set(live.current_workbench_jobs), reg.name
-                )
+                fail_generate_jobs(stranded, reg.name)
+            except Exception:
+                log.exception("worker.generate_disconnect_handler_failed")
+            # Then surface any DB-backed Workbench jobs as ERROR.
+            try:
+                await fail_jobs_on_worker_disconnect(stranded, reg.name)
             except Exception:
                 log.exception("worker.workbench_disconnect_handler_failed")

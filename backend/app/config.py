@@ -23,6 +23,20 @@ class Settings(BaseSettings):
     # Worker auth — shared secret presented on WS connect.
     worker_shared_secret: str = Field(default="dev-secret-change-me", alias="WORKER_SHARED_SECRET")
 
+    # External generate-API auth. A dedicated key so third-party apps (e.g.
+    # seedbook) can call POST /api/v1/generate without sharing the worker
+    # fleet credential. Rotatable independently of WORKER_SHARED_SECRET. Empty
+    # string disables the public generate API entirely (every call 503s) so a
+    # deploy that never sets the key can't be probed.
+    drydock_api_key: str = Field(default="", alias="DRYDOCK_API_KEY")
+
+    # Hard ceiling for a single synchronous generate call before the API gives
+    # up waiting on the worker. Local models on a busy Mac can be slow, so this
+    # is generous; callers can pass a lower per-request timeout.
+    generate_timeout_seconds: float = Field(
+        default=120.0, alias="GENERATE_TIMEOUT_SECONDS"
+    )
+
     # GitHub integration
     github_token: str = Field(default="", alias="GITHUB_TOKEN")
     github_username: str = Field(default="", alias="GITHUB_USERNAME")

@@ -19,6 +19,7 @@ from app.orchestrator.workbench_jobs import workbench_watchdog_loop
 from app.routes import (
     auth,
     dashboard,
+    generate as generate_routes,
     operator as operator_routes,
     projects,
     remote_machines as remote_machines_routes,
@@ -178,6 +179,11 @@ app.include_router(auth.router)  # /setup, /login, /logout
 # Worker WebSocket auths with a shared secret, NOT the user session. Keep it
 # outside the session-gated set.
 app.include_router(workers.router)  # /ws/worker
+
+# Public generate API authenticates with DRYDOCK_API_KEY (header), NOT the
+# operator session cookie. Kept outside the session-gated set so external
+# server-to-server callers (seedbook, etc.) can reach it. See DRYDOCK-API.md.
+app.include_router(generate_routes.router)  # /api/v1/generate
 
 
 # ── Authed endpoints ────────────────────────────────────────────────

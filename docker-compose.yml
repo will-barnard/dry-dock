@@ -27,6 +27,10 @@ services:
       DATABASE_URL: postgresql+asyncpg://drydock:${DB_PASSWORD}@postgres:5432/drydock
       DATABASE_URL_SYNC: postgresql://drydock:${DB_PASSWORD}@postgres:5432/drydock
       WORKER_SHARED_SECRET: ${WORKER_SHARED_SECRET}
+      # Public generate API (POST /api/v1/generate). Empty => API disabled.
+      # Set this in the Beachhead env to the same value seedbook uses.
+      DRYDOCK_API_KEY: ${DRYDOCK_API_KEY:-}
+      GENERATE_TIMEOUT_SECONDS: ${GENERATE_TIMEOUT_SECONDS:-120}
       SESSION_SECRET: ${SESSION_SECRET}
       SESSION_HTTPS_ONLY: ${SESSION_HTTPS_ONLY:-true}
       GITHUB_TOKEN: ${GITHUB_TOKEN}

@@ -49,7 +49,7 @@ Edit `.env`:
 | `ORCHESTRATOR_URL` | `wss://drydock.your-domain.com/ws/worker` | Public URL of the Beachhead deploy with the `/ws/worker` path. |
 | `WORKER_SHARED_SECRET` | (paste) | Must match the value set in Beachhead env. |
 | `WORKER_NAME` | `macbook-coder-1` | Globally unique. Used as the registry key. |
-| `WORKER_POOL` | `coder` | One of `planner | coder | reviewer | tester | refactorer | docs | researcher`. |
+| `WORKER_POOL` | `coder` | One of `planner | coder | reviewer | tester | refactorer | docs | researcher | validator`. A `validator` worker runs the project's build/lint/test commands and does no inference — see KNOWN_POOLS in `backend/app/orchestrator/pools.py`. Without one, every `validate` task the planner emits sits QUEUED forever. |
 | `HARDWARE_CLASS` | `macbook` | Free-form. Used for routing hints. |
 | `RAM_GB` | `64` | Honest advertised RAM. |
 | `MAX_CONTEXT` | `32768` | Max context tokens this worker can handle. |

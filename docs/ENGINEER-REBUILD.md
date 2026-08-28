@@ -440,6 +440,13 @@ the free win; run the runtime as a measured A/B *through* the Phase 1 harness.
 - Tier-0 parsers wired into `write_file` (Vue, ts/js, py, json).
 - `run_check` backed by named commands; add `Project.check_commands` as a
   name->command map so `validate_commands` keeps its current meaning.
+- **Checks need a "not yet applicable" verdict.** Today a check either passes or
+  fails, so on a greenfield repo `npm install` fails from task #1 — and the
+  auto-requeue then appends a bogus build error to the coder's prompt and burns
+  every attempt against `max_attempts` for a repo that legitimately has no
+  `package.json` yet. A check that cannot run is not a check that failed. Give
+  `run_check` three outcomes (pass / fail / skipped) and let each check declare
+  a precondition.
 - `renderer/` gains `POST /smoke`; engineer calls it as `run_check("smoke")`.
 - **The gate move:** in `workers.py:_handle_result`, require a passing validation
   in the result payload before `apply_patch_and_push`. Unvalidated work still

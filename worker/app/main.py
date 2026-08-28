@@ -62,6 +62,25 @@ _configure_logging()
 log = structlog.get_logger()
 
 
+def _chat_options() -> dict[str, Any]:
+    """Inference options for the conversational paths — Operator chat, the
+    tool loop, Workbench, and the generate API.
+
+    These had the same defect as the task runners: no options meant Ollama's
+    4096-token default, which truncates from the front and quietly eats the
+    system prompt and the older half of a conversation. Temperature is higher
+    than the runners' on purpose — chat and research want some variety;
+    structured code edits do not.
+    """
+    s = get_settings()
+    return {
+        "num_ctx": s.max_context,
+        "temperature": s.chat_temperature,
+        "top_p": s.top_p,
+        "num_predict": s.num_predict,
+    }
+
+
 class Worker:
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -226,7 +245,9 @@ class Worker:
         tokens_in = 0
         tokens_out = 0
         try:
-            async for ev in provider.chat_stream(model, req.messages):
+            async for ev in provider.chat_stream(
+                model, req.messages, options=_chat_options()
+            ):
                 piece = (ev.get("message") or {}).get("content") or ""
                 if piece:
                     chunks.append(piece)
@@ -297,7 +318,9 @@ class Worker:
         tokens_out = 0
         try:
             for iteration in range(self._MAX_TOOL_ITERATIONS):
-                result = await provider.chat(model, messages, tools=req.tools)
+                result = await provider.chat(
+                    model, messages, tools=req.tools, options=_chat_options()
+                )
                 msg = result.get("message") or {}
                 tokens_in += result.get("prompt_eval_count", 0) or 0
                 tokens_out += result.get("eval_count", 0) or 0
@@ -342,7 +365,7 @@ class Worker:
 
             # Exhausted the iteration budget — make one final tool-free call so
             # the model produces a real answer instead of stalling.
-            final = await provider.chat(model, messages)
+            final = await provider.chat(model, messages, options=_chat_options())
             content = (final.get("message") or {}).get("content") or (
                 "I wasn't able to finish researching that within the tool-call "
                 "budget. Here's what I found so far."
@@ -374,7 +397,9 @@ class Worker:
         model = req.model or self.settings.default_model
         log.info("worker.workbench_started", job=str(req.job_id), kind=req.kind, model=model)
         try:
-            result = await provider.chat(model, req.messages)
+            result = await provider.chat(
+                model, req.messages, options=_chat_options()
+            )
             content = (result.get("message") or {}).get("content") or ""
             await self.send(WorkbenchResultMsg(
                 job_id=req.job_id, kind=req.kind, success=True, content=content,

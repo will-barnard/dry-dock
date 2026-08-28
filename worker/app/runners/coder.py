@@ -32,6 +32,7 @@ from app.runners.base import (
     relevant_files_for_prompt,
     render_contract_section,
     render_file_contents,
+    render_tree,
     request_sr_retry,
     task_contract,
     task_target_files,
@@ -80,18 +81,48 @@ class CoderRunner(BaseRunner):
                 self.ctx.prompt, all_files, max_files=20
             )
             file_source = "heuristic"
-        self._file_section = render_file_contents(ws, self._target_files)
+            # The planner named files and none of them exist. Falling back to
+            # the keyword heuristic silently loses the plan's intent, so say so.
+            requested = (self.ctx.payload or {}).get("target_files")
+            if requested:
+                await self.ctx.emit_log(
+                    "stderr",
+                    f"WARNING: the plan named target_files that do not exist in "
+                    f"this branch ({', '.join(str(f) for f in requested)}); fell "
+                    f"back to the keyword heuristic. The plan's intent was lost.",
+                )
 
-        # Cap the tree dump independently — it gives the model awareness of
-        # files it may want to reference even if it didn't see their content.
-        self._tree = "\n".join(all_files)
         self._contract_section = render_contract_section(task_contract(self.ctx.payload))
+
+        # Budget the prompt BEFORE assembling it. The tree is only an awareness
+        # aid — it tells the model what exists so it can name a path — so it
+        # gets a hard cap and file contents get the rest.
+        budget = self.file_budget_tokens(self._contract_section)
+        tree_budget = min(1500, budget // 4)
+        self._tree, tree_omitted = render_tree(all_files, budget_tokens=tree_budget)
+        rendered = render_file_contents(
+            ws, self._target_files, budget_tokens=budget - tree_budget
+        )
+        self._file_section = rendered.text
+        self._target_files = rendered.included
 
         await self.ctx.emit_log(
             "system",
-            f"cloned repo on branch={branch}, {len(all_files)} files, "
-            f"loaded {len(self._target_files)} into prompt (source={file_source})",
+            f"cloned repo on branch={branch}, {len(all_files)} files; "
+            f"prompt carries {rendered.summary()} (source={file_source})",
         )
+        if rendered.dropped:
+            await self.ctx.emit_log(
+                "stderr",
+                f"WARNING: {len(rendered.dropped)} target file(s) did not fit the "
+                f"token budget and were NOT shown to the model: "
+                f"{', '.join(rendered.dropped)}. Any SEARCH block written against "
+                f"these is written blind. Narrow the task or raise MAX_CONTEXT.",
+            )
+        if tree_omitted:
+            await self.ctx.emit_log(
+                "system", f"file tree truncated: {tree_omitted} path(s) not listed"
+            )
 
     def user_prompt(self) -> str:
         return (

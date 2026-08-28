@@ -6,6 +6,7 @@
 #   ./ollama-host-setup.sh          # show what it would do, then confirm
 #   ./ollama-host-setup.sh -y       # no prompt
 #   ./ollama-host-setup.sh --show   # just print current values and exit
+#   ./ollama-host-setup.sh --serve-agent   # headless Macs — see below
 #
 #   KEEP_ALIVE=-1 ./ollama-host-setup.sh -y    # dedicated worker box
 #
@@ -80,6 +81,80 @@ if [[ "${1:-}" == "--show" ]]; then
   exit 0
 fi
 
+# ── --serve-agent: the headless path ────────────────────────────────
+# Instead of setting session-wide env vars, run ollama serve ourselves from
+# a LaunchAgent with EnvironmentVariables baked in. The settings travel with
+# the process, so there is no launchd domain to be denied.
+if [[ "${1:-}" == "--serve-agent" ]]; then
+  SERVE_PLIST="$HOME/Library/LaunchAgents/com.drydock.ollama-serve.plist"
+  OLLAMA_BIN="$(command -v ollama || true)"
+  [[ -n "$OLLAMA_BIN" ]] || { echo "error: ollama not on PATH" >&2; exit 1; }
+
+  # Preserve the current bind address. Workers reach Ollama from inside
+  # Docker via host.docker.internal, which cannot reach a 127.0.0.1 bind —
+  # so default to all interfaces if nothing is set. Do not narrow this on a
+  # machine whose workers are already connecting.
+  HOST_BIND="${OLLAMA_HOST:-$(launchctl getenv OLLAMA_HOST 2>/dev/null || true)}"
+  HOST_BIND="${HOST_BIND:-0.0.0.0:11434}"
+
+  echo "ollama binary : $OLLAMA_BIN"
+  echo "bind address  : $HOST_BIND"
+  echo "keep alive    : $KEEP_ALIVE"
+  echo "plist         : $SERVE_PLIST"
+  echo
+  echo "This takes over serving. Anything already bound to 11434 (Ollama.app,"
+  echo "brew services, a stray 'ollama serve') must stop first or the agent"
+  echo "will fail to bind."
+  echo
+  read -r -p "Stop those and proceed? [y/N] " reply
+  [[ "$reply" =~ ^[Yy]$ ]] || { echo "aborted"; exit 0; }
+
+  osascript -e 'quit app "Ollama"' 2>/dev/null || true
+  brew services stop ollama 2>/dev/null || true
+  pkill -f "ollama serve" 2>/dev/null || true
+  sleep 2
+
+  mkdir -p "$(dirname "$SERVE_PLIST")"
+  {
+    echo '<?xml version="1.0" encoding="UTF-8"?>'
+    echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+    echo '<plist version="1.0"><dict>'
+    echo '  <key>Label</key><string>com.drydock.ollama-serve</string>'
+    echo '  <key>ProgramArguments</key><array>'
+    echo "    <string>${OLLAMA_BIN}</string><string>serve</string>"
+    echo '  </array>'
+    echo '  <key>EnvironmentVariables</key><dict>'
+    echo "    <key>OLLAMA_HOST</key><string>${HOST_BIND}</string>"
+    for i in "${!KEYS[@]}"; do
+      echo "    <key>${KEYS[$i]}</key><string>${VALS[$i]}</string>"
+    done
+    echo '  </dict>'
+    echo '  <key>RunAtLoad</key><true/>'
+    echo '  <key>KeepAlive</key><true/>'
+    echo '  <key>StandardOutPath</key><string>/tmp/drydock-ollama.log</string>'
+    echo '  <key>StandardErrorPath</key><string>/tmp/drydock-ollama.err</string>'
+    echo '</dict></plist>'
+  } > "$SERVE_PLIST"
+  echo "wrote $SERVE_PLIST"
+
+  launchctl unload "$SERVE_PLIST" 2>/dev/null || true
+  launchctl load "$SERVE_PLIST"
+  sleep 3
+
+  echo
+  if curl -fsS "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1; then
+    echo "Ollama is up with the new environment."
+    echo "Verify:  ollama ps        (UNTIL column reflects keep-alive)"
+    echo "Logs:    tail -f /tmp/drydock-ollama.err"
+  else
+    echo "Ollama did not answer on 11434. Check /tmp/drydock-ollama.err —"
+    echo "the usual cause is something else still holding the port."
+  fi
+  echo
+  echo "To undo:  launchctl unload \"$SERVE_PLIST\" && rm \"$SERVE_PLIST\""
+  exit 0
+fi
+
 echo "This will:"
 echo "  1. launchctl setenv each of the five variables below (takes effect now)"
 echo "  2. write $PLIST so they survive a reboot"
@@ -98,10 +173,46 @@ if [[ "${1:-}" != "-y" ]]; then
 fi
 
 # ── 1. immediate ────────────────────────────────────────────────────
+# launchctl setenv targets the CALLER's launchd domain. Over SSH (or under
+# sudo) that is the system domain, which SIP refuses:
+#
+#   Could not set environment: 150: Operation not permitted while System
+#   Integrity Protection is engaged
+#
+# That is not a broken script and not something to disable SIP over — it
+# means this mechanism is the wrong one for a headless box. Fall through
+# to --serve-agent below, which attaches the environment to the ollama
+# process itself and never touches a launchd domain.
+SETENV_OK=1
 for i in "${!KEYS[@]}"; do
-  launchctl setenv "${KEYS[$i]}" "${VALS[$i]}"
-  echo "set ${KEYS[$i]}=${VALS[$i]}"
+  if launchctl setenv "${KEYS[$i]}" "${VALS[$i]}" 2>/dev/null; then
+    echo "set ${KEYS[$i]}=${VALS[$i]}"
+  else
+    SETENV_OK=0
+  fi
 done
+
+if [[ "$SETENV_OK" -eq 0 ]]; then
+  cat <<'SIPNOTE'
+
+launchctl setenv was refused (SIP blocks the system domain). You are almost
+certainly running this over SSH or with sudo.
+
+  If this Mac has a display and you can open Terminal.app on it:
+      re-run this script there, WITHOUT sudo, and it will work.
+
+  If this Mac is headless (a Mac mini serving workers), that is the normal
+  case and launchctl setenv is the wrong tool. Run:
+
+      ./ollama-host-setup.sh --serve-agent
+
+  which installs a LaunchAgent that starts `ollama serve` with these
+  variables baked into the process environment. Survives reboot, needs no
+  GUI session, and SIP is not involved.
+
+SIPNOTE
+  exit 1
+fi
 
 # ── 2. persist across reboot ────────────────────────────────────────
 mkdir -p "$(dirname "$PLIST")"

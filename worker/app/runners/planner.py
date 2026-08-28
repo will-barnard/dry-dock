@@ -23,7 +23,13 @@ import re
 import structlog
 
 from app.git_workspace import GitWorkspace
-from app.runners.base import BaseRunner, RunnerResult, extract_fenced_blocks
+from app.runners.base import (
+    BaseRunner,
+    RunnerResult,
+    extract_fenced_blocks,
+    prompt_token_budget,
+    render_tree,
+)
 
 log = structlog.get_logger()
 
@@ -115,12 +121,24 @@ class PlannerRunner(BaseRunner):
             )
             await ws.__aenter__()
             try:
-                self._tree = "\n".join(
+                all_files = [
                     f for f in ws.list_files()
                     if not f.startswith(
                         (".git/", "node_modules/", ".venv/", "dist/", "build/")
                     )
-                )
+                ]
+                # The planner's whole input is the tree, so it gets most of the
+                # budget — but still a bound, or a large repo silently pushes
+                # the instructions out of the window.
+                budget = max(1024, prompt_token_budget() - 2000)
+                self._tree, omitted = render_tree(all_files, budget_tokens=budget)
+                if omitted:
+                    await self.ctx.emit_log(
+                        "stderr",
+                        f"WARNING: repo has {len(all_files)} files; {omitted} were "
+                        f"omitted from the tree shown to the planner. target_files "
+                        f"for those paths cannot be planned.",
+                    )
             finally:
                 await ws.__aexit__(None, None, None)
         except Exception as exc:
@@ -225,7 +243,9 @@ class PlannerRunner(BaseRunner):
             {"role": "user", "content": retry_user_msg},
         ]
         try:
-            result = await self.provider.chat(self.model, messages)
+            result = await self.provider.chat(
+                self.model, messages, options=self.inference_options()
+            )
         except Exception as exc:
             log.warning("planner.format_retry_failed", error=str(exc))
             return ""

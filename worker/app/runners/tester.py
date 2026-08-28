@@ -60,9 +60,24 @@ class TesterRunner(BaseRunner):
                 self.ctx.prompt, all_files, max_files=20
             )
             selected = list(dict.fromkeys(prompt_files + test_files))
-        self._file_section = render_file_contents(self._ws, selected)
         self._tests_summary = "\n".join(test_files) or "(no existing tests found)"
         self._contract_section = render_contract_section(task_contract(self.ctx.payload))
+        rendered = render_file_contents(
+            self._ws,
+            selected,
+            budget_tokens=self.file_budget_tokens(
+                self._contract_section, self._tests_summary
+            ),
+        )
+        self._file_section = rendered.text
+        if rendered.dropped:
+            await self.ctx.emit_log(
+                "stderr",
+                f"WARNING: {len(rendered.dropped)} target file(s) did not fit the "
+                f"token budget and were NOT shown to the model: "
+                f"{', '.join(rendered.dropped)}. Any SEARCH block written against "
+                f"these is written blind. Narrow the task or raise MAX_CONTEXT.",
+            )
         await self.ctx.emit_log(
             "system",
             f"branch={branch}, existing test files: {len(test_files)}, "

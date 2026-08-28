@@ -95,9 +95,24 @@ class DocsRunner(BaseRunner):
                 self.ctx.prompt, all_files, max_files=20
             )
             selected = list(dict.fromkeys(prompt_files + docs))
-        self._file_section = render_file_contents(ws, selected)
         self._docs_summary = "\n".join(docs) or "(no doc files found)"
         self._contract_section = render_contract_section(task_contract(self.ctx.payload))
+        rendered = render_file_contents(
+            ws,
+            selected,
+            budget_tokens=self.file_budget_tokens(
+                self._contract_section, self._docs_summary
+            ),
+        )
+        self._file_section = rendered.text
+        if rendered.dropped:
+            await self.ctx.emit_log(
+                "stderr",
+                f"WARNING: {len(rendered.dropped)} target file(s) did not fit the "
+                f"token budget and were NOT shown to the model: "
+                f"{', '.join(rendered.dropped)}. Any SEARCH block written against "
+                f"these is written blind. Narrow the task or raise MAX_CONTEXT.",
+            )
 
     def user_prompt(self) -> str:
         return (

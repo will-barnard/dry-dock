@@ -13,6 +13,7 @@ from app.runners.base import (
     relevant_files_for_prompt,
     render_contract_section,
     render_file_contents,
+    render_tree,
     task_contract,
     task_target_files,
 )
@@ -52,9 +53,23 @@ class RefactorerRunner(BaseRunner):
             self._target_files = relevant_files_for_prompt(
                 self.ctx.prompt, all_files, max_files=20
             )
-        self._file_section = render_file_contents(ws, self._target_files)
-        self._tree = "\n".join(all_files)
         self._contract_section = render_contract_section(task_contract(self.ctx.payload))
+        budget = self.file_budget_tokens(self._contract_section)
+        tree_budget = min(1500, budget // 4)
+        self._tree, _ = render_tree(all_files, budget_tokens=tree_budget)
+        rendered = render_file_contents(
+            ws, self._target_files, budget_tokens=budget - tree_budget
+        )
+        self._file_section = rendered.text
+        await self.ctx.emit_log("system", f"prompt carries {rendered.summary()}")
+        if rendered.dropped:
+            await self.ctx.emit_log(
+                "stderr",
+                f"WARNING: {len(rendered.dropped)} target file(s) did not fit the "
+                f"token budget and were NOT shown to the model: "
+                f"{', '.join(rendered.dropped)}. Any SEARCH block written against "
+                f"these is written blind. Narrow the task or raise MAX_CONTEXT.",
+            )
 
     def user_prompt(self) -> str:
         return (

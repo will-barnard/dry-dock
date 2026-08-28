@@ -71,6 +71,61 @@ class BaseRunner:
         """Called before the LLM is invoked. Subclasses may clone the repo here."""
         return
 
+    # ── Inference options ───────────────────────────────────────────
+
+    def inference_options(self) -> dict[str, Any]:
+        """Options sent with EVERY call this runner makes.
+
+        num_ctx is the load-bearing one. Omit it and Ollama falls back to its
+        4096 default, then truncates the prompt from the front — dropping the
+        system prompt and every loaded file, and returning a confident answer
+        written from the task description alone. Subclasses may override for
+        role-specific sampling.
+        """
+        s = get_settings()
+        return {
+            "num_ctx": s.max_context,
+            "temperature": s.temperature,
+            "top_p": s.top_p,
+            "repeat_penalty": s.repeat_penalty,
+            "num_predict": s.num_predict,
+        }
+
+    def file_budget_tokens(self, *extra: str) -> int:
+        """Tokens left for file contents once the fixed prompt parts are paid for.
+
+        `extra` is any additional fixed text the subclass will include (the
+        contract section, a rendered tree) so it is not double-counted.
+        """
+        fixed = estimate_tokens(self.system_prompt()) + estimate_tokens(self.ctx.prompt)
+        for t in extra:
+            fixed += estimate_tokens(t)
+        return max(512, prompt_token_budget() - fixed)
+
+    async def report_prompt_size(self, messages: list[dict[str, Any]]) -> int:
+        """Log the assembled prompt size, and shout if it will not fit.
+
+        This deliberately does NOT truncate. A runner that overflows should be
+        fixed where it assembles its prompt; silently trimming here would just
+        reintroduce the invisible failure in a different place. The log line is
+        the alarm.
+        """
+        total = sum(estimate_tokens(m.get("content") or "") for m in messages)
+        budget = prompt_token_budget()
+        ctx = self.inference_options()["num_ctx"]
+        await self.ctx.emit_log(
+            "system", f"prompt ~{total} tokens (budget {budget}, num_ctx {ctx})"
+        )
+        if total > budget:
+            await self.ctx.emit_log(
+                "stderr",
+                f"WARNING: prompt ~{total} tokens exceeds the {budget}-token input "
+                f"budget for num_ctx={ctx}. Ollama truncates from the FRONT, so the "
+                f"system prompt and loaded file contents are what get dropped. "
+                f"Narrow target_files or raise MAX_CONTEXT on this worker.",
+            )
+        return total
+
     async def finalize(self, response_text: str) -> RunnerResult:
         """Called after the LLM returns. Subclasses parse the response and emit
         their domain-specific artifacts here."""
@@ -85,14 +140,23 @@ class BaseRunner:
             {"role": "system", "content": self.system_prompt()},
             {"role": "user", "content": self.user_prompt()},
         ]
-        await self.ctx.emit_log("system", f"model={self.model} role={self.role}")
+        options = self.inference_options()
+        await self.ctx.emit_log(
+            "system",
+            f"model={self.model} role={self.role} "
+            f"num_ctx={options['num_ctx']} temp={options['temperature']} "
+            f"num_predict={options['num_predict']}",
+        )
+        await self.report_prompt_size(messages)
 
         chunks: list[str] = []
         tokens_in = 0
         tokens_out = 0
         log_buf: list[str] = []
         try:
-            async for ev in self.provider.chat_stream(self.model, messages):
+            async for ev in self.provider.chat_stream(
+                self.model, messages, options=options
+            ):
                 msg = ev.get("message") or {}
                 piece = msg.get("content") or ""
                 if piece:
@@ -336,11 +400,12 @@ def apply_search_replace_blocks(
 # auto-included whether or not the task prompt mentions them by name, so the
 # model always sees the project's current configuration and won't "create"
 # a config file that already exists.
+# NOTE: lockfiles (package-lock.json, pnpm-lock.yaml, yarn.lock) are
+# deliberately NOT here. They are enormous, carry no information the model can
+# act on, and because config files sort first they used to occupy the most
+# valuable position in the prompt — ahead of the file actually being edited.
 _ALWAYS_INCLUDE_BASENAMES = {
     "package.json",
-    "package-lock.json",
-    "pnpm-lock.yaml",
-    "yarn.lock",
     "tsconfig.json",
     "jsconfig.json",
     "pyproject.toml",
@@ -475,15 +540,102 @@ def relevant_files_for_prompt(
     return ordered[:max_files]
 
 
+# ── Token budgeting ─────────────────────────────────────────────────
+#
+# Ollama truncates a prompt that exceeds num_ctx and it keeps the TAIL, so the
+# system prompt and the loaded file contents are the first things dropped —
+# leaving the model with a bare task description and no output format. The
+# call still succeeds and returns confident nonsense, which is why this went
+# unnoticed for so long. Everything below exists so we never hand Ollama a
+# prompt it will quietly eat.
+
+_CHARS_PER_TOKEN = 3.5
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token count, for budgeting only.
+
+    3.5 chars/token rather than the usual English 4: source is denser in
+    punctuation and short identifiers. Erring toward over-estimation is
+    deliberate — under-estimating is what lets a prompt overflow unnoticed.
+    """
+    if not text:
+        return 0
+    return int(len(text) / _CHARS_PER_TOKEN) + 1
+
+
+def prompt_token_budget(settings: Any = None) -> int:
+    """Tokens available for the INPUT side of one call.
+
+    num_predict comes off the top because generated tokens share the window
+    with the prompt. What remains is scaled by prompt_budget_ratio to leave
+    room for the retry paths, which replay the whole conversation plus the
+    previous assistant turn — roughly doubling the input on a second attempt.
+    """
+    s = settings or get_settings()
+    usable = s.max_context - s.num_predict
+    return max(1024, int(usable * s.prompt_budget_ratio))
+
+
+@dataclass
+class RenderedFiles:
+    """Result of fitting file contents into a token budget."""
+
+    text: str
+    included: list[str] = field(default_factory=list)
+    dropped: list[str] = field(default_factory=list)
+    tokens: int = 0
+
+    def summary(self) -> str:
+        out = f"{len(self.included)} file(s), ~{self.tokens} tokens"
+        if self.dropped:
+            out += f"; DROPPED {len(self.dropped)} over budget: {', '.join(self.dropped)}"
+        return out
+
+
+def render_tree(all_files: list[str], *, budget_tokens: int) -> tuple[str, int]:
+    """Render the repo file tree, capped to a token budget.
+
+    The tree is an awareness aid — it tells the model what exists so it can
+    ask for a file by name. It is not worth spending real budget on, so it
+    gets truncated hard and says so. Returns (text, omitted_count).
+    """
+    kept: list[str] = []
+    used = 0
+    for f in all_files:
+        cost = estimate_tokens(f) + 1
+        if used + cost > budget_tokens:
+            break
+        kept.append(f)
+        used += cost
+    omitted = len(all_files) - len(kept)
+    text = "\n".join(kept)
+    if omitted:
+        text += f"\n…[{omitted} more files not listed; ask for a path if you need it]"
+    return text, omitted
+
+
 def render_file_contents(
-    ws: GitWorkspace, files: list[str], *, max_bytes_per_file: int = 24000
-) -> str:
+    ws: GitWorkspace,
+    files: list[str],
+    *,
+    max_bytes_per_file: int = 24000,
+    budget_tokens: int | None = None,
+) -> RenderedFiles:
     """Format selected file contents as a section the model can refer to.
 
     Each file is wrapped in markers so the model knows precisely what it's
     looking at and how to refer back to it in SEARCH/REPLACE blocks.
+
+    When budget_tokens is given, files are added in order until the budget is
+    spent and the rest are reported in `.dropped` — the caller is expected to
+    log that, because a silently dropped file is exactly the condition that
+    makes a model write a SEARCH block against a file it never saw.
     """
     parts: list[str] = []
+    included: list[str] = []
+    dropped: list[str] = []
+    used = 0
     for f in files:
         try:
             content = ws.read(f)
@@ -491,8 +643,19 @@ def render_file_contents(
             continue
         if len(content) > max_bytes_per_file:
             content = content[:max_bytes_per_file] + f"\n…[truncated; file is {len(content)} bytes]\n"
-        parts.append(f"--- FILE: {f} ---\n{content}\n--- END FILE: {f} ---\n")
-    return "\n".join(parts)
+        block = f"--- FILE: {f} ---\n{content}\n--- END FILE: {f} ---\n"
+        cost = estimate_tokens(block)
+        if budget_tokens is not None and used + cost > budget_tokens and included:
+            # Always keep at least one file: a prompt with no file content is
+            # worse than one slightly over budget.
+            dropped.append(f)
+            continue
+        parts.append(block)
+        included.append(f)
+        used += cost
+    return RenderedFiles(
+        text="\n".join(parts), included=included, dropped=dropped, tokens=used
+    )
 
 
 async def with_workspace(project: dict[str, Any]):
@@ -582,7 +745,9 @@ async def request_format_retry(
         {"role": "user", "content": retry_msg},
     ]
     try:
-        result = await runner.provider.chat(runner.model, messages)
+        result = await runner.provider.chat(
+            runner.model, messages, options=runner.inference_options()
+        )
     except Exception as exc:
         log.warning("runner.format_retry_failed", error=str(exc))
         return ""
@@ -609,7 +774,17 @@ async def request_sr_retry(
     loaded content. Once we hand it the real bytes, it nearly always
     produces a correct block on the second try.
     """
-    contents = render_file_contents(ws, failed_files, max_bytes_per_file=20000)
+    # The retry replays the original prompt AND the previous assistant turn,
+    # so only about half the input budget is left for these file contents.
+    rendered = render_file_contents(
+        ws,
+        failed_files,
+        max_bytes_per_file=20000,
+        budget_tokens=max(512, prompt_token_budget() // 2),
+    )
+    contents = rendered.text
+    if rendered.dropped:
+        log.warning("runner.retry_files_dropped", dropped=rendered.dropped)
     if not contents.strip():
         return ""  # nothing to retry with — give up cleanly
 
@@ -632,7 +807,9 @@ async def request_sr_retry(
         {"role": "user", "content": retry_user_msg},
     ]
     try:
-        result = await runner.provider.chat(runner.model, messages)
+        result = await runner.provider.chat(
+            runner.model, messages, options=runner.inference_options()
+        )
     except Exception as exc:
         log.warning("runner.retry_failed", error=str(exc))
         return ""

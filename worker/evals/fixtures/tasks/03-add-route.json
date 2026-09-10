@@ -1,0 +1,46 @@
+{
+  "id": "03-add-route",
+  "title": "Two coordinated files",
+  "difficulty": "medium",
+  "note": "The real test of target_files: a new view AND its registration. Models routinely do one and forget the other.",
+  "prompt": "Add an About page. Create src/views/AboutView.vue with an <h1> reading \"About\" and a short paragraph. Register it in src/router/index.ts at path /about with the route name 'about'. Import the view at the top of the router file the same way HomeView is imported.",
+  "payload": {
+    "target_files": [
+      "src/views/AboutView.vue",
+      "src/router/index.ts"
+    ]
+  },
+  "assertions": [
+    {
+      "kind": "file_exists",
+      "path": "src/views/AboutView.vue"
+    },
+    {
+      "kind": "contains",
+      "path": "src/views/AboutView.vue",
+      "pattern": "About"
+    },
+    {
+      "kind": "contains",
+      "path": "src/router/index.ts",
+      "pattern": "/about"
+    },
+    {
+      "kind": "contains",
+      "path": "src/router/index.ts",
+      "pattern": "name: 'about'|name: \"about\""
+    },
+    {
+      "kind": "contains",
+      "path": "src/router/index.ts",
+      "pattern": "AboutView"
+    },
+    {
+      "kind": "contains",
+      "path": "src/router/index.ts",
+      "pattern": "name: 'home'|name: \"home\"",
+      "guard": true
+    }
+  ],
+  "guard_note": "Assertions flagged `guard` are regression checks \u2014 they hold on the untouched seed and exist to catch a model that rewrites the file and drops existing content. They are scored separately from task assertions."
+}

@@ -1,0 +1,37 @@
+{
+  "id": "02-edit-existing",
+  "title": "Modify an existing component",
+  "difficulty": "easy",
+  "note": "Exercises SEARCH/REPLACE against a file the runner did load. A SEARCH miss here means the model paraphrased content it could see.",
+  "prompt": "Add an optional prop `excited` (boolean, default false) to src/components/HelloWorld.vue. When it is true the greeting ends with an exclamation mark instead of nothing. Do not change anything else about the component.",
+  "payload": {
+    "target_files": [
+      "src/components/HelloWorld.vue"
+    ]
+  },
+  "assertions": [
+    {
+      "kind": "contains",
+      "path": "src/components/HelloWorld.vue",
+      "pattern": "excited"
+    },
+    {
+      "kind": "contains",
+      "path": "src/components/HelloWorld.vue",
+      "pattern": "withDefaults|= false|\\?:"
+    },
+    {
+      "kind": "contains",
+      "path": "src/components/HelloWorld.vue",
+      "pattern": "Hello",
+      "guard": true
+    },
+    {
+      "kind": "contains",
+      "path": "src/components/HelloWorld.vue",
+      "pattern": "subtitle",
+      "guard": true
+    }
+  ],
+  "guard_note": "Assertions flagged `guard` are regression checks \u2014 they hold on the untouched seed and exist to catch a model that rewrites the file and drops existing content. They are scored separately from task assertions."
+}

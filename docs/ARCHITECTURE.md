@@ -12,6 +12,9 @@ Volumes:
 
 - `dry-dock-postgres` (fixed name) — Postgres data dir.
 - `dry-dock-repos` — orchestrator's cached clones of each project repo.
+- `dry-dock-images` — rendered Darkroom PNGs + thumbnails, one directory per
+  job. Binaries never go in Postgres (`Artifact.content` is `Text`); the fixed
+  volume name is what carries them across a blue/green swap.
 
 Network: a single `internal` bridge network. Every service declares it
 explicitly; nothing uses `ports:` (Beachhead's nginx-proxy routes public
@@ -46,9 +49,20 @@ Wire: JSON-over-WebSocket. Workers connect outbound to
 last meaningful message before disconnect is usually a `result`.
 
 **Worker → orchestrator**: `register`, `heartbeat`, `claim_request`,
-`job_started`, `log`, `artifact`, `result`, `error`.
+`job_started`, `log`, `artifact`, `result`, `error`, `chat_chunk`,
+`chat_tool_call`, `chat_done`, `chat_error`, `workbench_result`,
+`image_result`, `image_progress`.
 
-**Orchestrator → worker**: `welcome`, `claim_grant`, `cancel`, `ping`.
+**Orchestrator → worker**: `welcome`, `claim_grant`, `cancel`, `ping`,
+`chat_request`, `chat_tool_result`, `workbench_request`, `image_request`.
+
+`register` carries an additive `capabilities` list (`chat` / `image`) that
+predates nothing — workers that don't send it get the pydantic default, which
+is how the fleet upgrades one machine at a time. Non-task work reuses the
+Workbench pair wherever it's chat-shaped (that's why the generate API needed
+zero worker changes); Darkroom is the exception, because `run_workbench_job`
+is hard-wired to one `provider.chat` returning a string and an image job
+isn't chat-shaped.
 
 The full pydantic-validated definitions live in
 `backend/app/orchestrator/protocol.py` and the mirror in

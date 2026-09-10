@@ -97,7 +97,11 @@ class GitWorkspace:
         # Use a credentialed URL when a token is available so we can clone
         # private repos. Token in the URL is fine over HTTPS for ephemeral
         # clones; git won't write it to ~/.netrc unless asked.
-        if settings.github_token:
+        if settings.clone_url_override:
+            # Eval / offline mode. See Settings.clone_url_override.
+            url = settings.clone_url_override
+            log.info("git_workspace.clone_url_override", url=url)
+        elif settings.github_token:
             user = settings.github_username or "x-access-token"
             url = f"https://{user}:{settings.github_token}@github.com/{self.owner}/{self.repo}.git"
         else:

@@ -11,11 +11,10 @@ See DRYDOCK-API.md in the repo root for the full contract.
 """
 from __future__ import annotations
 
-import hmac
-
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from app.api_auth import require_api_key
 from app.config import get_settings
 from app.orchestrator.generate import GenerateError, run_generate
 
@@ -72,21 +71,9 @@ class GenerateResponse(BaseModel):
 
 
 def _require_api_key(x_api_key: str | None, authorization: str | None) -> None:
-    """Constant-time check of the presented key against DRYDOCK_API_KEY.
-
-    Accepts either the `X-API-Key` header or `Authorization: Bearer <key>`.
-    A blank server key means the API is disabled — return 503 rather than
-    letting a blank-vs-blank comparison succeed."""
-    settings = get_settings()
-    server_key = settings.drydock_api_key
-    if not server_key:
-        raise HTTPException(503, "Generate API is disabled (DRYDOCK_API_KEY unset).")
-
-    presented = x_api_key
-    if not presented and authorization and authorization.lower().startswith("bearer "):
-        presented = authorization[7:].strip()
-    if not presented or not hmac.compare_digest(presented, server_key):
-        raise HTTPException(401, "Invalid or missing API key.")
+    """Thin wrapper kept for call-site stability. The implementation moved to
+    app/api_auth.py so /api/v1/image shares exactly this check."""
+    require_api_key(x_api_key, authorization, what="Generate API")
 
 
 @router.get("/generate/health")

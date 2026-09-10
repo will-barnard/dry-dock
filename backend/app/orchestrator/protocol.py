@@ -27,6 +27,13 @@ class RegisterMsg(BaseModel):
     ram_gb: int
     installed_models: list[str]
     max_context: int
+    # Additive capability advertising. Absent from an un-upgraded worker's
+    # register message, which pydantic fills with the default — so old and new
+    # workers interoperate and the fleet upgrades one machine at a time.
+    #   "chat"  — Ollama-backed task/chat work (the implicit default)
+    #   "image" — ComfyUI diffusion work (the Darkroom `imager` pool)
+    # Imagers also put {"workflows": [...], "checkpoints": [...]} in metadata.
+    capabilities: list[str] = Field(default_factory=list)
     # Optional GPU advertising — workers that don't have a dedicated GPU leave
     # these at the defaults. Used by the router to filter tasks that declare a
     # min_vram_gb requirement.
@@ -236,6 +243,82 @@ class WorkbenchResultMsg(BaseModel):
     error: str | None = None
 
 
+# ────────────────────────── Darkroom image messages ──────────────────────────
+#
+# Image generation is the one place that could NOT reuse the Workbench message
+# pair. `run_workbench_job` is hard-wired to a single `provider.chat` returning
+# a string; an un-upgraded worker handed an image job would answer with prose
+# where the caller expects PNG bytes. So Darkroom gets its own pair, and the
+# `capabilities` field on RegisterMsg (additive — pydantic defaults it for old
+# workers) is how the orchestrator knows who can actually serve one.
+#
+# One ImageResultMsg per image, never one fat frame: a 1024² PNG is ~1-2 MB,
+# so ~1.4-2.7 MB once base64'd, and a batch of four in a single frame would
+# block the socket for everything else on that worker.
+
+
+class ImageRequestMsg(BaseModel):
+    """orchestrator → worker: render one image job on ComfyUI."""
+
+    type: Literal["image_request"] = "image_request"
+    job_id: uuid.UUID
+    # Named workflow template the worker ships (e.g. "sdxl_txt2img"). The
+    # worker owns the graph; the orchestrator owns the parameters.
+    workflow: str = "sdxl_txt2img"
+    # Escape hatch: a raw ComfyUI graph, which overrides `workflow` entirely.
+    # Lets a new workflow be trialled from the orchestrator without rebuilding
+    # and redeploying the worker on the Windows box.
+    graph: dict[str, Any] | None = None
+    prompt: str
+    negative_prompt: str | None = None
+    checkpoint: str | None = None  # None → worker's COMFYUI_DEFAULT_CHECKPOINT
+    width: int = 1024
+    height: int = 1024
+    steps: int = 30
+    cfg: float = 6.0
+    sampler: str | None = None
+    scheduler: str | None = None
+    seed: int | None = None  # None → worker randomizes and reports what it used
+    batch: int = 1  # capped orchestrator-side; see IMAGE_MAX_BATCH
+
+
+class ImageResultMsg(BaseModel):
+    """worker → orchestrator: one finished image (or a whole-job failure).
+
+    `index`/`total` let the orchestrator assemble a batch. A failure arrives as
+    a single message with success=False and index=0.
+    """
+
+    type: Literal["image_result"] = "image_result"
+    job_id: uuid.UUID
+    index: int = 0
+    total: int = 1
+    success: bool
+    image_b64: str = ""  # PNG bytes, base64-encoded
+    seed: int | None = None
+    # What ACTUALLY ran, as opposed to what was asked for. The generate API's
+    # `model` field echoes the request and is a known trap; this one is
+    # truthful and is the field worth logging.
+    checkpoint: str | None = None
+    width: int = 0
+    height: int = 0
+    elapsed_ms: int = 0
+    error: str | None = None
+
+
+class ImageProgressMsg(BaseModel):
+    """worker → orchestrator: optional progress ping while a job renders.
+
+    Purely cosmetic — the job row is authoritative. Workers may skip it.
+    """
+
+    type: Literal["image_progress"] = "image_progress"
+    job_id: uuid.UUID
+    step: int = 0
+    total_steps: int = 0
+    note: str | None = None
+
+
 # Discriminated union for parsing inbound messages.
 WorkerInbound = (
     RegisterMsg
@@ -250,4 +333,6 @@ WorkerInbound = (
     | ChatDoneMsg
     | ChatErrorMsg
     | WorkbenchResultMsg
+    | ImageResultMsg
+    | ImageProgressMsg
 )

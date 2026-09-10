@@ -20,6 +20,29 @@ scaffold; everything else is work to do.
 - **Approval gates** for plan fan-out and merge.
 - **Live log streaming** via SSE → HTMX.
 
+## Darkroom — image generation (shipped)
+
+Landed outside the phase order because it's a new substrate rather than a
+deeper version of the existing loop: ComfyUI on the Windows RTX 5080, reached
+by an `imager` worker over a dedicated `image_request` / `image_result` message
+pair. Module UI at `/darkroom`, a keyed submit/poll API at `/api/v1/image`
+(async by necessity — the GPU box sleeps), and a `generate_image` tool the
+Operator is offered only while an imager is idle.
+
+Design: `docs/specs/darkroom-image-generation.md`. Contract: `IMAGE-API.md`.
+Standing up the box: `docs/DARKROOM-SETUP.md`.
+
+Follow-ons, in the order they'd be worth doing:
+
+- [ ] **img2img + inpainting**, which is where Darkroom meets listing photos:
+  background replacement and cleanup for Gearline. The transport already
+  carries it — add `init_image_b64` / `mask_b64` and a named workflow.
+- [ ] **Prompt library** — save a prompt + parameter set as a reusable preset,
+  since `params` is already stored as a blob.
+- [ ] **Model preference per workflow**, mirroring the Phase 4 idea for text.
+- [ ] **Second imager** if another GPU ever appears; `pick_imager` would need
+  the same idle-preference logic the text pools have, and no more.
+
 ## Phase 1 — make the loop dependable
 
 Goal: a plan→code→review→merge cycle that runs cleanly without babysitting.

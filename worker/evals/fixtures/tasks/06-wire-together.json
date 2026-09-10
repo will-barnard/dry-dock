@@ -1,0 +1,51 @@
+{
+  "id": "06-wire-together",
+  "title": "Create and wire in one task",
+  "difficulty": "hard",
+  "note": "Deliberately at the edge of the '<=3 files, one observable outcome' rule the planner is told to respect. If the green rate collapses here but holds on 01-03, the answer is smaller tasks, not a bigger model.",
+  "prompt": "Add a status footer. Create src/components/StatusBar.vue that takes a prop `message` (string, required) and renders it inside a <footer> with class 'status'. Then use it in src/views/HomeView.vue below the existing HelloWorld, passing the message 'Ready'. Import it with the @/components alias the way HomeView already imports HelloWorld.",
+  "payload": {
+    "target_files": [
+      "src/components/StatusBar.vue",
+      "src/views/HomeView.vue"
+    ]
+  },
+  "assertions": [
+    {
+      "kind": "file_exists",
+      "path": "src/components/StatusBar.vue"
+    },
+    {
+      "kind": "contains",
+      "path": "src/components/StatusBar.vue",
+      "pattern": "footer"
+    },
+    {
+      "kind": "contains",
+      "path": "src/components/StatusBar.vue",
+      "pattern": "message"
+    },
+    {
+      "kind": "contains",
+      "path": "src/views/HomeView.vue",
+      "pattern": "StatusBar"
+    },
+    {
+      "kind": "contains",
+      "path": "src/views/HomeView.vue",
+      "pattern": "@/components/StatusBar.vue"
+    },
+    {
+      "kind": "contains",
+      "path": "src/views/HomeView.vue",
+      "pattern": "Ready"
+    },
+    {
+      "kind": "contains",
+      "path": "src/views/HomeView.vue",
+      "pattern": "HelloWorld",
+      "guard": true
+    }
+  ],
+  "guard_note": "Assertions flagged `guard` are regression checks \u2014 they hold on the untouched seed and exist to catch a model that rewrites the file and drops existing content. They are scored separately from task assertions."
+}

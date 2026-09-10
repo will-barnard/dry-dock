@@ -1,0 +1,40 @@
+{
+  "id": "04-fix-type-error",
+  "title": "Fix a seeded type error",
+  "difficulty": "medium",
+  "note": "Seeds a broken file, then asks for a repair. Tests whether the model reads what is there rather than rewriting from imagination.",
+  "seed_files": {
+    "src/components/CounterBadge.vue": "<template>\n  <span class=\"badge\">{{ label }}</span>\n</template>\n\n<script setup lang=\"ts\">\nimport { computed } from 'vue'\n\nconst props = defineProps<{ count: number }>()\n\n// BUG: toUpperCase does not exist on number\nconst label = computed(() => props.count.toUpperCase())\n</script>\n\n<style scoped>\n.badge {\n  font-weight: 600;\n}\n</style>\n"
+  },
+  "prompt": "src/components/CounterBadge.vue does not typecheck: it calls .toUpperCase() on `count`, which is a number. Fix it so the badge renders the count followed by the word 'items' (for example '3 items'). Change only what is necessary.",
+  "payload": {
+    "target_files": [
+      "src/components/CounterBadge.vue"
+    ]
+  },
+  "assertions": [
+    {
+      "kind": "not_contains",
+      "path": "src/components/CounterBadge.vue",
+      "pattern": "toUpperCase"
+    },
+    {
+      "kind": "contains",
+      "path": "src/components/CounterBadge.vue",
+      "pattern": "items"
+    },
+    {
+      "kind": "contains",
+      "path": "src/components/CounterBadge.vue",
+      "pattern": "count",
+      "guard": true
+    },
+    {
+      "kind": "contains",
+      "path": "src/components/CounterBadge.vue",
+      "pattern": "class=\"badge\"",
+      "guard": true
+    }
+  ],
+  "guard_note": "Assertions flagged `guard` are regression checks \u2014 they hold on the untouched seed and exist to catch a model that rewrites the file and drops existing content. They are scored separately from task assertions."
+}

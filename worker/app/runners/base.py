@@ -242,14 +242,42 @@ def extract_diff(text: str) -> str | None:
 # Match the head/middle/tail markers; the filename is whatever appeared on the
 # preceding line. We capture greedy bodies non-greedily and stop on the
 # closing marker. DOTALL so '.' matches newlines inside the bodies.
+# The `indent` group is load-bearing. Models copy the indentation of whatever
+# example they were shown, and the example in SEARCH_REPLACE_INSTRUCTIONS used
+# to be indented four spaces. When that indentation is carried into the block
+# bodies the results are silent and total:
+#
+#   - editing a file: the SEARCH text has four spaces added to every line, so
+#     it never matches the real file. Every edit task fails with "SEARCH not
+#     found", which reads like the model hallucinating the file's contents.
+#   - creating a file: every line lands on disk four columns over.
+#
+# So we capture the indentation of the `<<<<<<< SEARCH` marker and strip
+# exactly that prefix from the body lines. Blocks written correctly at column
+# zero capture an empty indent and are untouched.
 _SR_RE = re.compile(
-    r"<{5,}\s*SEARCH\s*\n"
-    r"(?P<search>.*?)\n?"
-    r"={5,}\s*\n"
-    r"(?P<replace>.*?)\n?"
-    r">{5,}\s*REPLACE\s*$",
+    r"^(?P<indent>[ \t]*)<{5,}[ \t]*SEARCH[ \t]*\n"
+    r"(?P<search>.*?)"
+    r"^[ \t]*={5,}[ \t]*\n"
+    r"(?P<replace>.*?)"
+    r"^[ \t]*>{5,}[ \t]*REPLACE[ \t]*$",
     re.DOTALL | re.MULTILINE,
 )
+
+
+def _strip_block_indent(body: str, indent: str) -> str:
+    """Remove `indent` from the front of each line of a SR block body.
+
+    Only strips the exact prefix, and only where present — a blank line or a
+    line that is already flush left is left alone, so genuinely indented code
+    inside a correctly-formatted block keeps its shape.
+    """
+    if not indent or not body:
+        return body
+    out = []
+    for line in body.splitlines(keepends=True):
+        out.append(line[len(indent):] if line.startswith(indent) else line)
+    return "".join(out)
 
 
 def extract_search_replace_blocks(text: str) -> list[tuple[str, str, str]]:
@@ -273,6 +301,7 @@ def extract_search_replace_blocks(text: str) -> list[tuple[str, str, str]]:
 
     blocks: list[tuple[str, str, str]] = []
     for m in _SR_RE.finditer(flat):
+        indent = m.group("indent") or ""
         # Walk backward from the match start to find the filename line.
         head = flat[: m.start()]
         filename = ""
@@ -294,7 +323,11 @@ def extract_search_replace_blocks(text: str) -> list[tuple[str, str, str]]:
             # hunting rather than walking further into prose.
             break
         if filename:
-            blocks.append((filename, m.group("search"), m.group("replace")))
+            blocks.append((
+                filename,
+                _strip_block_indent(m.group("search"), indent),
+                _strip_block_indent(m.group("replace"), indent),
+            ))
     return blocks
 
 
@@ -728,12 +761,14 @@ async def request_format_retry(
         "requires changes expressed in that format — your prose answer can't "
         "be applied as-is. Please re-emit the same changes using "
         "SEARCH/REPLACE blocks:\n\n"
-        "  path/to/file\n"
-        "  <<<<<<< SEARCH\n"
-        "  (current text, or empty for a new file)\n"
-        "  =======\n"
-        "  (new text, or empty to delete the file)\n"
-        "  >>>>>>> REPLACE\n\n"
+        "path/to/file\n"
+        "<<<<<<< SEARCH\n"
+        "(current text, or empty for a new file)\n"
+        "=======\n"
+        "(new text, or empty to delete the file)\n"
+        ">>>>>>> REPLACE\n\n"
+        "Start the path and all three marker lines at column zero — do not "
+        "indent them.\n\n"
         "For a brand-new file, leave SEARCH empty. Wrap each file you want "
         "to change in its own block. Output ONLY the blocks (a one-line "
         "summary above them is fine), no prose explanations between them."
@@ -821,14 +856,15 @@ async def request_sr_retry(
 SEARCH_REPLACE_INSTRUCTIONS = """\
 When you need to change files, output one or more SEARCH/REPLACE blocks in
 this exact format (a brief plain-prose plan before them is fine; nothing else
-matters):
+matters). Note that the path and the three marker lines all start at column
+zero — do NOT indent them:
 
-    path/to/file.py
-    <<<<<<< SEARCH
-    exact lines currently in the file
-    =======
-    new lines to replace them with
-    >>>>>>> REPLACE
+path/to/file.py
+<<<<<<< SEARCH
+exact lines currently in the file
+=======
+new lines to replace them with
+>>>>>>> REPLACE
 
 Rules:
   - The SEARCH text must match the file's current contents EXACTLY, byte for
@@ -842,5 +878,9 @@ Rules:
     the same file are fine; they apply in order.
   - Do NOT output a unified diff or anything resembling one. SEARCH/REPLACE
     is the only accepted change format.
+  - Do NOT indent the block. The marker lines and the file path start at
+    column zero, and the lines between them carry only the file's own
+    indentation. Adding indentation to a SEARCH block stops it matching the
+    file; adding it to a REPLACE block writes badly indented code.
 """
 

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Darkroom — image generation{% endblock %}
+{% block content %}
+<nav class="text-sm text-slate-500 mb-4"><a href="/" class="hover:underline">Modules</a> / Darkroom</nav>
+
+<header class="mb-4 flex items-start justify-between gap-4 flex-wrap">
+  <div>
+    <h1 class="text-2xl font-semibold">Darkroom</h1>
+    <p class="text-sm text-slate-500 mt-1">
+      Text-to-image on your own GPU, through ComfyUI. Same fleet, different substrate.
+    </p>
+  </div>
+
+  {# Machine strip. The imager sleeps, so "offline" is usually "asleep" — say
+     which, and offer the wake rather than just reporting a red dot. #}
+  <div class="text-xs border border-slate-200 rounded bg-white px-3 py-2">
+    {% if imager.count %}
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span class="font-medium">
+          {{ imager.count }} imager{{ '' if imager.count == 1 else 's' }} online
+        </span>
+      </div>
+      <div class="text-slate-400 font-mono text-[10px] mt-0.5">
+        {% for w in imager.imagers %}
+          {{ w.name }}{% if w.busy %} (busy){% endif %}{% if not loop.last %}, {% endif %}
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+        <span class="font-medium">No imager online</span>
+      </div>
+      <div class="text-slate-500 mt-1">
+        {% if imager.can_wake %}
+          {{ imager.machine }} is asleep. Generating wakes it automatically
+          (~1-2 min), or
+          <form method="post" action="/darkroom/wake" class="inline m-0">
+            <button class="underline hover:text-slate-900">wake it now</button>
+          </form>.
+        {% else %}
+          <span class="text-amber-700">IMAGE_MACHINE isn't configured, so nothing can be woken automatically.</span>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+</header>
+
+{% if error %}
+  <div class="mb-4 border border-rose-200 bg-rose-50 text-rose-700 rounded px-3 py-2 text-sm">
+    {{ error }}
+  </div>
+{% endif %}
+
+<section class="bg-white border border-slate-200 rounded p-4 mb-6">
+  <form method="post" action="/darkroom/generate" class="text-sm">
+    <label class="block">
+      <span class="text-xs text-slate-500">prompt</span>
+      <textarea id="prompt" name="prompt" required rows="3"
+                placeholder="a weathered Rhodes piano on a foggy beach at dawn, soft light"
+                class="w-full border border-slate-300 rounded px-3 py-2 mt-0.5"></textarea>
+    </label>
+
+    <div class="flex items-center gap-3 mt-1">
+      <button type="button"
+              class="text-xs text-violet-700 hover:underline"
+              hx-post="/darkroom/refine"
+              hx-include="#prompt"
+              hx-target="#refined"
+              hx-swap="innerHTML"
+              hx-indicator="#refining">
+        ✨ Refine with the fleet
+      </button>
+      <span id="refining" class="htmx-indicator text-xs text-slate-400">thinking…</span>
+    </div>
+    <div id="refined"></div>
+
+    <label class="block mt-3">
+      <span class="text-xs text-slate-500">negative prompt (optional)</span>
+      <input id="negative_prompt" name="negative_prompt"
+             placeholder="blurry, watermark, text, extra fingers"
+             class="w-full border border-slate-300 rounded px-3 py-1.5 mt-0.5">
+    </label>
+
+    <details class="mt-3">
+      <summary class="text-xs text-slate-500 cursor-pointer hover:text-slate-800">Advanced</summary>
+      <div class="flex flex-wrap gap-3 items-end mt-2">
+        <label class="flex flex-col">
+          <span class="text-xs text-slate-500">size</span>
+          <select name="size" class="border border-slate-300 rounded px-2 py-1">
+            {% for label, w, h in size_presets %}
+              <option value="{{ w }}x{{ h }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="flex flex-col">
+          <span class="text-xs text-slate-500">checkpoint</span>
+          <select name="checkpoint" class="border border-slate-300 rounded px-2 py-1 font-mono text-xs">
+            <option value="">worker default</option>
+            {% for c in checkpoints %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="flex flex-col">
+          <span class="text-xs text-slate-500">workflow</span>
+          <select name="workflow" class="border border-slate-300 rounded px-2 py-1 font-mono text-xs">
+            {% for w in workflows %}<option value="{{ w }}">{{ w }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="flex flex-col">
+          <span class="text-xs text-slate-500">steps</span>
+          <input name="steps" type="number" value="30" min="1" max="80"
+                 class="border border-slate-300 rounded px-2 py-1 w-20">
+        </label>
+        <label class="flex flex-col">
+          <span class="text-xs text-slate-500">cfg</span>
+          <input name="cfg" type="number" value="6.0" step="0.5" min="0" max="30"
+                 class="border border-slate-300 rounded px-2 py-1 w-20">
+        </label>
+        <label class="flex flex-col">
+          <span class="text-xs text-slate-500">seed</span>
+          <input name="seed" placeholder="random" inputmode="numeric"
+                 class="border border-slate-300 rounded px-2 py-1 w-32 font-mono">
+        </label>
+        <label class="flex flex-col">
+          <span class="text-xs text-slate-500">batch</span>
+          <input name="batch" type="number" value="1" min="1" max="{{ max_batch }}"
+                 class="border border-slate-300 rounded px-2 py-1 w-20">
+        </label>
+      </div>
+    </details>
+
+    <button class="bg-slate-900 text-white px-5 py-2 rounded mt-4">Generate</button>
+  </form>
+</section>
+
+<section>
+  <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600 mb-3">Gallery</h2>
+  {% if jobs %}
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {% for job in jobs %}
+        {% include "_darkroom_job.html" %}
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="text-sm text-slate-400 italic">
+      Nothing rendered yet. The first generation on a sleeping machine takes a
+      minute or two — after that it's seconds.
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

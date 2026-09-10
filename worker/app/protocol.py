@@ -22,6 +22,11 @@ class RegisterMsg(BaseModel):
     ram_gb: int
     installed_models: list[str]
     max_context: int
+    # Additive capability advertising — an un-upgraded worker simply omits it.
+    #   "chat"  — Ollama-backed task/chat work (the implicit default)
+    #   "image" — ComfyUI diffusion work (the Darkroom `imager` pool)
+    # Imagers also put {"workflows": [...], "checkpoints": [...]} in metadata.
+    capabilities: list[str] = Field(default_factory=list)
     gpu_vram_gb: int = 0
     gpu_model: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -179,3 +184,53 @@ class WorkbenchResultMsg(BaseModel):
     success: bool
     content: str = ""
     error: str | None = None
+
+
+# ── Darkroom image messages (mirror of backend protocol) ──
+#
+# Image work could not reuse the Workbench pair: run_workbench_job is
+# hard-wired to one provider.chat returning a string. One result message per
+# image, never one fat frame — a 1024² PNG is ~1.4-2.7 MB once base64'd.
+
+
+class ImageRequestMsg(BaseModel):
+    type: Literal["image_request"]
+    job_id: uuid.UUID
+    workflow: str = "sdxl_txt2img"
+    # Raw ComfyUI graph; overrides `workflow` when present.
+    graph: dict[str, Any] | None = None
+    prompt: str
+    negative_prompt: str | None = None
+    checkpoint: str | None = None
+    width: int = 1024
+    height: int = 1024
+    steps: int = 30
+    cfg: float = 6.0
+    sampler: str | None = None
+    scheduler: str | None = None
+    seed: int | None = None
+    batch: int = 1
+
+
+class ImageResultMsg(BaseModel):
+    type: Literal["image_result"] = "image_result"
+    job_id: uuid.UUID
+    index: int = 0
+    total: int = 1
+    success: bool
+    image_b64: str = ""
+    seed: int | None = None
+    # What actually ran, not what was asked for.
+    checkpoint: str | None = None
+    width: int = 0
+    height: int = 0
+    elapsed_ms: int = 0
+    error: str | None = None
+
+
+class ImageProgressMsg(BaseModel):
+    type: Literal["image_progress"] = "image_progress"
+    job_id: uuid.UUID
+    step: int = 0
+    total_steps: int = 0
+    note: str | None = None

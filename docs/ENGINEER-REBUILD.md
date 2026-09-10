@@ -382,7 +382,7 @@ now so routing works the day you switch it on.
 
 ## 06 · Sequence
 
-### Phase 0 — Stop discarding the prompt (~half a day)
+### Phase 0 — Stop discarding the prompt (~half a day) — SHIPPED
 
 Do this first, independently of everything else.
 
@@ -417,12 +417,25 @@ truncation bug, and shipping a runtime swap in the same window as an architectur
 change means you won't know which one moved the number. Upgrade Ollama now for
 the free win; run the runtime as a measured A/B *through* the Phase 1 harness.
 
-### Phase 1 — The eval harness (~2 days)
+### Phase 1 — The eval harness (~2 days) — SHIPPED
 
-- New `evals/`: pinned repo snapshot, ~20 task fixtures, a runner that drives a
-  worker directly (no orchestrator, no DB).
-- Score the five metrics above. One JSON row per (model, task, run).
-- Run against today's code for a baseline.
+Lives in `worker/evals/`. See its README for flags and how to add fixtures.
+
+- A pinned Vue 3 + Vite seed repo, six task fixtures, and a driver that invokes
+  a runner in-process. No orchestrator, no database, no network: each fixture is
+  committed to a throwaway local bare repo and reached through the new
+  `CLONE_URL_OVERRIDE` seam in `config.py` / `git_workspace.py`.
+- Scoring reads the emitted **patch artifact**, not the worktree — runners delete
+  their worktree in a `finally`, and the patch is what the orchestrator would
+  actually apply. A patch that fails `git apply` scores zero however good the
+  prose was.
+- `--validate-fixtures` asserts every task assertion *fails* on the untouched
+  seed. An assertion that already passes measures nothing and silently inflates
+  every later score. Regression guards are marked and scored separately so they
+  cannot pay the model for work it did not do.
+- `--runner coder|engineer` is the seam that lets Phase 2 be raced against
+  today's behaviour on identical fixtures.
+- Run against current `main` for the baseline.
 
 ### Phase 2 — The engineer loop (~1 week)
 

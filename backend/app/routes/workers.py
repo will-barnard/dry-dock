@@ -57,11 +57,14 @@ from app.orchestrator.protocol import (
     JobStartedMsg,
     LogChunkMsg,
     RegisterMsg,
+    ImageProgressMsg,
+    ImageResultMsg,
     ResultMsg,
     WelcomeMsg,
     WorkbenchResultMsg,
 )
 from app.orchestrator.generate import fail_generate_jobs, resolve_generate
+from app.orchestrator.image_jobs import fail_image_jobs, resolve_image
 from app.orchestrator.workbench_jobs import (
     fail_jobs_on_worker_disconnect,
     handle_cover_letter_result,
@@ -100,6 +103,8 @@ _INBOUND_BY_TYPE = {
     "chat_error": ChatErrorMsg,
     "chat_tool_call": ChatToolCallMsg,
     "workbench_result": WorkbenchResultMsg,
+    "image_result": ImageResultMsg,
+    "image_progress": ImageProgressMsg,
 }
 
 
@@ -344,6 +349,8 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
         gpu_vram_gb=reg.gpu_vram_gb,
         gpu_model=reg.gpu_model,
         hardware_class=reg.hardware_class,
+        capabilities=reg.capabilities,
+        metadata=reg.metadata,
     )
     await registry.add(live)
     await live.send(
@@ -449,6 +456,32 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
                     await live.send(reply.model_dump(mode="json"))
                 except Exception:
                     log.exception("worker.tool_result_send_failed")
+            elif isinstance(msg, ImageResultMsg):
+                # One message per image; the driver task in image_jobs.py owns
+                # assembly, file writes and the DB row. A job we don't know
+                # about is a late arrival (timed out, or we restarted) —
+                # log it and drop it rather than writing an orphan file.
+                if not resolve_image(
+                    msg.job_id,
+                    success=msg.success,
+                    index=msg.index,
+                    total=msg.total,
+                    image_b64=msg.image_b64,
+                    seed=msg.seed,
+                    checkpoint=msg.checkpoint,
+                    width=msg.width,
+                    height=msg.height,
+                    elapsed_ms=msg.elapsed_ms,
+                    error=msg.error,
+                ):
+                    live.current_image_jobs.discard(msg.job_id)
+                    log.warning("worker.image_result_unclaimed", job=str(msg.job_id))
+            elif isinstance(msg, ImageProgressMsg):
+                # Cosmetic only — the job row is authoritative.
+                log.debug(
+                    "worker.image_progress", job=str(msg.job_id),
+                    step=msg.step, total=msg.total_steps,
+                )
             elif isinstance(msg, WorkbenchResultMsg):
                 # Clear in-flight tracking so the disconnect path doesn't try
                 # to fail an already-completed job if the socket drops next.
@@ -522,3 +555,11 @@ async def worker_socket(ws: WebSocket, token: str = Query(...)):
                 await fail_jobs_on_worker_disconnect(stranded, reg.name)
             except Exception:
                 log.exception("worker.workbench_disconnect_handler_failed")
+        # Same treatment for Darkroom renders in flight on this worker. Their
+        # driver task owns the DB write, so this just pushes the failure onto
+        # the driver's queue and lets it unwind normally.
+        if live.current_image_jobs:
+            try:
+                fail_image_jobs(set(live.current_image_jobs), reg.name)
+            except Exception:
+                log.exception("worker.image_disconnect_handler_failed")

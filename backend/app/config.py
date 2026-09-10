@@ -99,6 +99,39 @@ class Settings(BaseSettings):
         default=45.0, alias="RENDERER_TIMEOUT_SECONDS"
     )
 
+    # ── Darkroom (image generation) ────────────────────────────────
+    # Where rendered PNGs land. Backed by the `images_data` named volume in
+    # docker-compose.yml — a fixed volume name is what survives a Beachhead
+    # blue/green swap, same bet repos_data already makes.
+    image_dir: str = Field(default="/var/lib/drydock/images", alias="IMAGE_DIR")
+    # Name of the remote machine (as configured in REMOTE_MACHINES_JSON) that
+    # hosts the imager. Empty disables auto-wake — jobs then just fail with
+    # "no imager online" instead of trying to wake anything.
+    image_machine: str = Field(default="", alias="IMAGE_MACHINE")
+    # How long to wait for a woken machine to boot, start Docker, and get its
+    # imager worker registered. Cold path is genuinely 60-150s on a sleeping
+    # box, so this is generous by design.
+    image_wake_timeout_seconds: float = Field(
+        default=180.0, alias="IMAGE_WAKE_TIMEOUT_SECONDS"
+    )
+    # Ceiling on a single render once a worker has actually picked it up.
+    image_job_timeout_seconds: float = Field(
+        default=300.0, alias="IMAGE_JOB_TIMEOUT_SECONDS"
+    )
+    # Hard cap on batch size. Each image is a separate WS message, but a big
+    # batch still monopolises the one GPU for minutes.
+    image_max_batch: int = Field(default=4, alias="IMAGE_MAX_BATCH")
+    # Delete rendered images older than this many days. 0 = keep forever.
+    image_retention_days: int = Field(default=0, alias="IMAGE_RETENTION_DAYS")
+    # Daily ceiling on images generated through the keyed API (0 = no cap).
+    # Anyone holding DRYDOCK_API_KEY can spend the GPU; this is the same shape
+    # of guard as WEB_SEARCH_DAILY_BUDGET.
+    image_daily_budget: int = Field(default=0, alias="IMAGE_DAILY_BUDGET")
+    # Default workflow template name the imager should use when none is given.
+    image_default_workflow: str = Field(
+        default="sdxl_txt2img", alias="IMAGE_DEFAULT_WORKFLOW"
+    )
+
     # User-Agent for the fetch_url tool. Defaults to a mainstream browser
     # string — an honest bot UA gets 403'd by Cloudflare-fronted sites.
     web_fetch_user_agent: str = Field(

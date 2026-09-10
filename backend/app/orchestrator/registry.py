@@ -27,6 +27,14 @@ class LiveWorker:
     gpu_vram_gb: int = 0
     gpu_model: str | None = None
     hardware_class: str = ""
+    # Additive capability advertising from RegisterMsg. Empty on every worker
+    # that predates it, which is exactly the text fleet — so treat an empty
+    # list as "chat" rather than "nothing".
+    capabilities: list[str] = field(default_factory=list)
+    # Free-form register metadata. Imagers put {"checkpoints": [...],
+    # "workflows": [...]} here so the Darkroom UI can populate its dropdowns
+    # without a round trip to the machine.
+    metadata: dict[str, Any] = field(default_factory=dict)
     current_task_id: uuid.UUID | None = None
     # Workbench jobs in flight on this worker. A worker can have several
     # concurrent non-streaming inferences (the worker runtime spawns each one
@@ -34,6 +42,10 @@ class LiveWorker:
     # disconnect path uses it to mark stranded jobs ERROR instead of leaving
     # them pinned in RUNNING forever.
     current_workbench_jobs: set[uuid.UUID] = field(default_factory=set)
+    # Darkroom jobs in flight. Separate from workbench jobs because the
+    # disconnect path routes them to a different failure handler, and because
+    # "is this imager busy?" is a question the UI asks directly.
+    current_image_jobs: set[uuid.UUID] = field(default_factory=set)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def send(self, payload: dict[str, Any]) -> None:

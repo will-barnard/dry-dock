@@ -11,17 +11,20 @@ contention, and parallelism comes from running multiple worker containers.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import platform
 import signal
 import sys
+import time
 import uuid
 from typing import Any
 
 import structlog
 import websockets
 
+from app.comfy_client import ComfyClient, ComfyError, load_workflows, render_graph
 from app.config import get_settings
 from app.ollama_client import get_provider
 from app.protocol import (
@@ -35,6 +38,8 @@ from app.protocol import (
     ClaimGrantMsg,
     ClaimRequestMsg,
     HeartbeatMsg,
+    ImageRequestMsg,
+    ImageResultMsg,
     JobStartedMsg,
     LogChunkMsg,
     RegisterMsg,
@@ -92,6 +97,11 @@ class Worker:
         # run_chat tool loop creates one when it emits a tool call; the
         # consume loop resolves it when the orchestrator's result arrives.
         self._pending_tool_calls: dict[str, asyncio.Future] = {}
+        # Darkroom state. Populated at register() time on an imager and left
+        # empty everywhere else, so a text worker carries no ComfyUI baggage.
+        self.comfy = ComfyClient()
+        self.workflows: dict[str, dict] = {}
+        self.checkpoints: list[str] = []
 
     # ── transport ──────────────────────────────────────────────────────────
 
@@ -122,11 +132,31 @@ class Worker:
     # ── lifecycle ──────────────────────────────────────────────────────────
 
     async def register(self) -> None:
-        try:
-            installed = await get_provider().list_models()
-        except Exception as exc:
-            log.warning("ollama.list_failed", error=str(exc))
-            installed = []
+        metadata: dict[str, Any] = {"platform": platform.platform()}
+
+        if self.settings.is_imager:
+            # An imager never talks to Ollama — asking it for a model list on a
+            # box where it isn't running just produces a scary log line. Its
+            # "installed models" are ComfyUI checkpoints, advertised so the
+            # Darkroom UI can only ever offer what this machine really has.
+            self.workflows = load_workflows()
+            self.checkpoints = await self.comfy.list_checkpoints()
+            installed = list(self.checkpoints)
+            metadata["checkpoints"] = self.checkpoints
+            metadata["workflows"] = sorted(self.workflows)
+            metadata["comfyui"] = self.settings.comfyui_base_url
+            if not self.checkpoints:
+                log.warning(
+                    "comfy.no_checkpoints",
+                    url=self.settings.comfyui_base_url,
+                    hint="ComfyUI unreachable or has no checkpoints installed",
+                )
+        else:
+            try:
+                installed = await get_provider().list_models()
+            except Exception as exc:
+                log.warning("ollama.list_failed", error=str(exc))
+                installed = []
 
         reg = RegisterMsg(
             name=self.settings.worker_name,
@@ -138,12 +168,22 @@ class Worker:
             max_context=self.settings.max_context,
             gpu_vram_gb=self.settings.gpu_vram_gb,
             gpu_model=self.settings.gpu_model,
-            metadata={"platform": platform.platform()},
+            capabilities=self.settings.capabilities,
+            metadata=metadata,
         )
         await self.send(reg.model_dump(mode="json"))
-        log.info("worker.registered", pool=self.settings.worker_pool, models=installed)
+        log.info(
+            "worker.registered",
+            pool=self.settings.worker_pool,
+            capabilities=self.settings.capabilities,
+            models=installed,
+        )
 
-        await self.send(ClaimRequestMsg().model_dump(mode="json"))
+        # Imagers have no runner for their pool and no task kind maps to them,
+        # so asking for task work would be noise. Image jobs are pushed, not
+        # claimed.
+        if not self.settings.is_imager:
+            await self.send(ClaimRequestMsg().model_dump(mode="json"))
 
     async def heartbeat_loop(self) -> None:
         while not self._stop.is_set():
@@ -411,6 +451,103 @@ class Worker:
                 job_id=req.job_id, kind=req.kind, success=False, content="", error=str(exc),
             ).model_dump(mode="json"))
 
+    # ── Darkroom ───────────────────────────────────────────────────
+
+    def _resolve_checkpoint(self, requested: str | None, template: dict) -> str | None:
+        """Pick the checkpoint to actually load.
+
+        Order: what the caller asked for → this worker's configured default →
+        whatever the template carries. If the choice isn't installed we fall
+        back to the first one that is, rather than letting ComfyUI fail on an
+        exact-string miss — the same class of silent filter that bit role-model
+        pins on the text fleet.
+        """
+        candidate = (
+            requested
+            or self.settings.comfyui_default_checkpoint
+            or (template.get("graph", {}).get("4", {}).get("inputs", {}).get("ckpt_name"))
+        )
+        if not self.checkpoints:
+            return candidate  # can't validate; let ComfyUI have the last word
+        if candidate in self.checkpoints:
+            return candidate
+        fallback = self.checkpoints[0]
+        log.warning(
+            "comfy.checkpoint_not_installed",
+            requested=candidate, using=fallback, available=self.checkpoints,
+        )
+        return fallback
+
+    async def run_image_job(self, req: ImageRequestMsg) -> None:
+        """Render one image job on ComfyUI and stream the results back.
+
+        One ImageResultMsg per image: a 1024² PNG is ~1.4-2.7MB base64, and a
+        batch of four in a single frame would block this socket for everything
+        else on the worker.
+        """
+        started = time.monotonic()
+        log.info("worker.image_started", job=str(req.job_id), workflow=req.workflow,
+                 batch=req.batch, steps=req.steps)
+        try:
+            if req.graph:
+                # Raw-graph escape hatch: lets a new workflow be trialled from
+                # the orchestrator without rebuilding this container.
+                graph = req.graph
+                checkpoint = req.checkpoint
+            else:
+                template = self.workflows.get(req.workflow)
+                if template is None:
+                    raise ComfyError(
+                        f"unknown workflow '{req.workflow}'. This worker has: "
+                        f"{sorted(self.workflows) or 'none'}"
+                    )
+                checkpoint = self._resolve_checkpoint(req.checkpoint, template)
+                graph = render_graph(template, {
+                    "checkpoint": checkpoint,
+                    "prompt": req.prompt,
+                    "negative_prompt": req.negative_prompt or "",
+                    "width": req.width,
+                    "height": req.height,
+                    "batch": req.batch,
+                    "seed": req.seed,
+                    "steps": req.steps,
+                    "cfg": req.cfg,
+                    "sampler": req.sampler,
+                    "scheduler": req.scheduler,
+                })
+
+            prompt_id = await self.comfy.submit(graph)
+            images = await self.comfy.wait_for_images(
+                prompt_id, timeout=self.settings.comfyui_timeout_seconds
+            )
+            elapsed = int((time.monotonic() - started) * 1000)
+
+            for i, data in enumerate(images):
+                await self.send(ImageResultMsg(
+                    job_id=req.job_id,
+                    index=i,
+                    total=len(images),
+                    success=True,
+                    image_b64=base64.b64encode(data).decode("ascii"),
+                    # A batch shares one seed and varies by batch index, so
+                    # every image in the batch reports the same seed.
+                    seed=req.seed,
+                    checkpoint=checkpoint,
+                    width=req.width,
+                    height=req.height,
+                    elapsed_ms=elapsed,
+                ).model_dump(mode="json"))
+            log.info("worker.image_done", job=str(req.job_id), count=len(images),
+                     elapsed_ms=elapsed, checkpoint=checkpoint)
+
+        except Exception as exc:  # noqa: BLE001
+            log.exception("worker.image_failed", job=str(req.job_id))
+            await self.send(ImageResultMsg(
+                job_id=req.job_id, index=0, total=1, success=False,
+                error=str(exc),
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            ).model_dump(mode="json"))
+
     async def consume_messages(self) -> None:
         assert self.ws is not None
         async for raw in self.ws:
@@ -434,6 +571,9 @@ class Worker:
             elif t == "workbench_request":
                 wreq = WorkbenchRequestMsg.model_validate(data)
                 asyncio.create_task(self.run_workbench_job(wreq))
+            elif t == "image_request":
+                ireq = ImageRequestMsg.model_validate(data)
+                asyncio.create_task(self.run_image_job(ireq))
             elif t == "cancel":
                 log.info("worker.cancel_received", task=data.get("task_id"))
                 # MVP: we don't currently abort an in-flight runner. Log and continue.

@@ -55,6 +55,8 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 #   engineer  — the original product: autonomous multi-agent software builds
 #   operator  — a chat surface that talks to the worker fleet directly
 #   workbench — a resume + cover-letter authoring tool
+#   scout     — per-site extraction recipes for the fetch tool
+#   darkroom  — image generation on the GPU box (ComfyUI, not Ollama)
 #
 # `status`: "active" modules are fully built; "preview" modules have a route
 # and a stub page but no real functionality yet.
@@ -98,6 +100,19 @@ MODULES: list[dict] = [
             "drafting and revision passes."
         ),
         "accent": "amber",
+    },
+    {
+        "id": "darkroom",
+        "name": "Darkroom",
+        "href": "/darkroom",
+        "status": "active",
+        "tagline": "Text-to-image on your own GPU",
+        "description": (
+            "Prompt to picture, rendered by ComfyUI on the Windows box rather "
+            "than a cloud API. The text fleet can rewrite a sentence into a "
+            "proper diffusion prompt first."
+        ),
+        "accent": "rose",
     },
     {
         "id": "scout",

@@ -29,7 +29,7 @@ from app.orchestrator.event_bus import bus
 from app.orchestrator.protocol import ChatRequestMsg
 from app.orchestrator.registry import registry
 from app.orchestrator import web_search
-from app.orchestrator.tools import OPERATOR_TOOLS, TOOLS_GUIDANCE
+from app.orchestrator.tools import TOOLS_GUIDANCE, available_tools
 
 log = structlog.get_logger()
 
@@ -152,7 +152,7 @@ async def handle_tool_call(
         },
     )
 
-    text, payload = await run_tool(name, arguments)
+    text, payload = await run_tool(name, arguments, conversation_id=conversation_id)
 
     # Persist a TOOL transcript row so the conversation shows what ran.
     async with SessionLocal() as session:
@@ -242,7 +242,9 @@ async def dispatch_turn(
     # and emits ChatToolCallMsg for each call; routes/workers.py runs the
     # tool and replies. Only effective on tool-capable models; others simply
     # ignore the `tools` field and answer directly.
-    tools = OPERATOR_TOOLS if web_mode == "tools" else None
+    # Built per-turn rather than a module constant: generate_image is only
+    # offered when an imager is online and idle. See tools.available_tools.
+    tools = await available_tools() if web_mode == "tools" else None
     if tools:
         # Prepend tool-use guidance so the model composes thoughtful queries
         # and chains search→fetch, rather than doing one verbatim lookup.

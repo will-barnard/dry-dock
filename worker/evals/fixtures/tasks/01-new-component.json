@@ -1,0 +1,16 @@
+{
+  "id": "01-new-component",
+  "title": "Create a standalone component",
+  "difficulty": "easy",
+  "note": "The single most common real task, and the one Will reported failing. One new file, no existing file to match against.",
+  "prompt": "Create a new component at src/components/TaskList.vue. It takes a required prop `tasks` typed as an array of { id: number; label: string; done: boolean }. It renders an unordered list with one <li> per task, showing the label. A task whose `done` is true gets the CSS class `done` on its <li>. If the array is empty, render a <p> saying \"No tasks yet\" instead of the list.",
+  "payload": { "target_files": ["src/components/TaskList.vue"] },
+  "assertions": [
+    { "kind": "file_exists", "path": "src/components/TaskList.vue" },
+    { "kind": "contains", "path": "src/components/TaskList.vue", "pattern": "script setup" },
+    { "kind": "contains", "path": "src/components/TaskList.vue", "pattern": "defineProps" },
+    { "kind": "contains", "path": "src/components/TaskList.vue", "pattern": "v-for" },
+    { "kind": "contains", "path": "src/components/TaskList.vue", "pattern": "No tasks yet" },
+    { "kind": "not_contains", "path": "src/components/TaskList.vue", "pattern": "export default \\{" }
+  ]
+}

@@ -687,3 +687,60 @@ class SiteLearningJob(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+# ════════════════════════ Darkroom (image generation) ══════════════
+
+
+class ImageJobStatus(str, enum.Enum):
+    PENDING = "pending"   # accepted, not yet dispatched
+    WAKING = "waking"     # the imager's machine is asleep; WoL sent, waiting
+    RUNNING = "running"   # dispatched to a worker
+    DONE = "done"
+    ERROR = "error"
+
+
+class ImageJobSource(str, enum.Enum):
+    MODULE = "module"      # the Darkroom UI
+    API = "api"            # POST /api/v1/image
+    OPERATOR = "operator"  # the generate_image tool inside a chat turn
+
+
+class ImageJob(Base):
+    """One image generation request — modelled on WorkbenchJob rather than
+    Task: no git, no DAG, no approval gates, no retries.
+
+    The PNG bytes do NOT live here. Artifact.content is Text and Postgres is
+    the wrong home for binaries, so images are written to the images volume
+    (see config.image_dir) and `result` holds their relative paths.
+    """
+
+    __tablename__ = "image_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    status: Mapped[ImageJobStatus] = mapped_column(
+        Enum(ImageJobStatus, name="image_job_status"), default=ImageJobStatus.PENDING
+    )
+    source: Mapped[ImageJobSource] = mapped_column(
+        Enum(ImageJobSource, name="image_job_source"), default=ImageJobSource.MODULE
+    )
+    prompt: Mapped[str] = mapped_column(Text)
+    negative_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Everything needed to reproduce the render: {workflow, checkpoint, width,
+    # height, steps, cfg, sampler, scheduler, seed, batch}. Stored as a blob so
+    # "re-roll" and "tweak" in the gallery are one-liners.
+    params: Mapped[dict] = mapped_column(JSON, default=dict)
+    # {"images": [{"path", "seed", "width", "height", "elapsed_ms"}],
+    #  "checkpoint": "<what actually ran>"}
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    worker_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Set when an Operator tool call created the job, so the transcript can
+    # link back to the image.
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

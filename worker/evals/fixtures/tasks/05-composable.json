@@ -1,0 +1,17 @@
+{
+  "id": "05-composable",
+  "title": "Create a TypeScript composable",
+  "difficulty": "easy",
+  "note": "Plain .ts rather than an SFC — isolates whether SFC structure is the problem or code generation generally is.",
+  "prompt": "Create src/composables/useCounter.ts exporting a function useCounter(initial = 0). It returns { count, increment, decrement, reset } where count is a ref and the three functions mutate it. reset returns count to the initial value. Type it properly; no `any`.",
+  "payload": { "target_files": ["src/composables/useCounter.ts"] },
+  "assertions": [
+    { "kind": "file_exists", "path": "src/composables/useCounter.ts" },
+    { "kind": "contains", "path": "src/composables/useCounter.ts", "pattern": "export function useCounter|export const useCounter" },
+    { "kind": "contains", "path": "src/composables/useCounter.ts", "pattern": "from 'vue'|from \"vue\"" },
+    { "kind": "contains", "path": "src/composables/useCounter.ts", "pattern": "increment" },
+    { "kind": "contains", "path": "src/composables/useCounter.ts", "pattern": "decrement" },
+    { "kind": "contains", "path": "src/composables/useCounter.ts", "pattern": "reset" },
+    { "kind": "not_contains", "path": "src/composables/useCounter.ts", "pattern": ": any" }
+  ]
+}

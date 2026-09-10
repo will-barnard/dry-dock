@@ -48,6 +48,22 @@ class Settings(BaseSettings):
     ollama_base_url: str = Field(default="http://host.docker.internal:11434", alias="OLLAMA_BASE_URL")
     default_model: str = Field(default="qwen2.5-coder:32b", alias="DEFAULT_MODEL")
 
+    # ── Darkroom / ComfyUI (imager workers only) ──────────────────
+    # An imager is an ordinary worker with WORKER_POOL=imager that talks to
+    # ComfyUI on its host instead of Ollama. Everything else — registration,
+    # heartbeat, reconnect, workers.sh — is unchanged.
+    comfyui_base_url: str = Field(
+        default="http://host.docker.internal:8188", alias="COMFYUI_BASE_URL"
+    )
+    # Used when a request doesn't pin one. Blank → the template's own default,
+    # and failing that whatever ComfyUI reports first.
+    comfyui_default_checkpoint: str = Field(default="", alias="COMFYUI_DEFAULT_CHECKPOINT")
+    # Ceiling for one render, including a cold checkpoint load.
+    comfyui_timeout_seconds: float = Field(default=300.0, alias="COMFYUI_TIMEOUT_SECONDS")
+    # Override the advertised capability list (comma-separated). Normally left
+    # blank — it's derived from WORKER_POOL.
+    worker_capabilities: str = Field(default="", alias="WORKER_CAPABILITIES")
+
     # GitHub credential used by GitWorkspace.clone() for private repos.
     # Reads-only is fine — workers never push. If left empty, clones fall
     # back to unauthenticated and will only succeed for public repos.
@@ -55,7 +71,31 @@ class Settings(BaseSettings):
     github_username: str = Field(default="", alias="GITHUB_USERNAME")
 
     worktree_root: str = Field(default="/app/worktrees", alias="WORKTREE_ROOT")
+
+    # Escape hatch for the eval harness and offline testing: when set, every
+    # GitWorkspace clones from this URL instead of building a GitHub one from
+    # owner/repo. A file:// path pointed at a local bare repo makes runner
+    # behaviour reproducible with no network and no GitHub state. Leave unset
+    # in production — the workers should always clone the real project.
+    clone_url_override: str = Field(default="", alias="CLONE_URL_OVERRIDE")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+
+    @property
+    def capabilities(self) -> list[str]:
+        """What this worker advertises it can do.
+
+        Derived from the pool so no existing env file has to change: every
+        current worker is a chat worker, and only `imager` is an image worker.
+        WORKER_CAPABILITIES overrides if you ever need a hybrid.
+        """
+        if self.worker_capabilities.strip():
+            return [c.strip() for c in self.worker_capabilities.split(",") if c.strip()]
+        return ["image"] if self.worker_pool == "imager" else ["chat"]
+
+    @property
+    def is_imager(self) -> bool:
+        return "image" in self.capabilities
 
 
 @lru_cache(maxsize=1)

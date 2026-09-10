@@ -1,0 +1,28 @@
+{# Swapped in under the composer after the text fleet rewrites a prompt.
+   Buttons write into the real form fields rather than replacing them, so a
+   bad refinement is never destructive. #}
+<div class="mt-2 border border-violet-200 bg-violet-50 rounded p-3 text-xs">
+  <div class="flex items-baseline justify-between mb-1">
+    <span class="font-semibold text-violet-800 uppercase tracking-wide text-[10px]">
+      Refined by {{ worker or 'the fleet' }}
+    </span>
+    <button type="button" class="text-violet-400 hover:text-violet-700"
+            onclick="this.closest('div.mt-2').remove()">dismiss</button>
+  </div>
+  <div class="font-mono text-slate-700 leading-relaxed">{{ prompt }}</div>
+  {% if negative %}
+    <div class="font-mono text-slate-500 leading-relaxed mt-1">
+      <span class="text-[10px] uppercase">negative:</span> {{ negative }}
+    </div>
+  {% endif %}
+  <button type="button"
+          class="mt-2 bg-violet-700 text-white px-3 py-1 rounded text-[11px]"
+          data-prompt="{{ prompt }}" data-negative="{{ negative }}"
+          onclick="
+            document.getElementById('prompt').value = this.dataset.prompt;
+            if (this.dataset.negative) document.getElementById('negative_prompt').value = this.dataset.negative;
+            this.closest('div.mt-2').remove();
+          ">
+    Use this
+  </button>
+</div>

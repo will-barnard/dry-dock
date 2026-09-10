@@ -1,0 +1,73 @@
+{# One job card. Polls itself until terminal, then stops emitting the trigger. #}
+<div id="job-{{ job.id }}"
+     class="border border-slate-200 rounded bg-white overflow-hidden"
+     {% if job.status.value in ('pending', 'waking', 'running') %}
+       hx-get="/darkroom/jobs/{{ job.id }}/card"
+       hx-trigger="load delay:2s"
+       hx-swap="outerHTML"
+     {% endif %}>
+
+  {% if job.status.value == 'done' and job.result and job.result.images %}
+    <div class="grid {% if job.result.images | length > 1 %}grid-cols-2{% else %}grid-cols-1{% endif %} gap-px bg-slate-100">
+      {% for img in job.result.images %}
+        <a href="/darkroom/images/{{ job.id }}/{{ img.index }}.png" target="_blank"
+           class="block bg-slate-50">
+          <img src="/darkroom/images/{{ job.id }}/{{ img.index }}_thumb.webp"
+               onerror="this.src='/darkroom/images/{{ job.id }}/{{ img.index }}.png'"
+               alt="" loading="lazy"
+               class="w-full h-auto object-cover">
+        </a>
+      {% endfor %}
+    </div>
+  {% elif job.status.value == 'error' %}
+    <div class="p-4 bg-rose-50 text-rose-700 text-xs">
+      <div class="font-semibold mb-1">Failed</div>
+      <div class="font-mono leading-relaxed">{{ job.error }}</div>
+    </div>
+  {% else %}
+    <div class="p-6 flex flex-col items-center justify-center text-center bg-slate-50 min-h-[180px]">
+      <div class="animate-pulse text-3xl mb-2">
+        {% if job.status.value == 'waking' %}🌙{% else %}🎨{% endif %}
+      </div>
+      <div class="text-xs font-medium text-slate-600">
+        {% if job.status.value == 'waking' %}
+          Waking the machine…
+        {% elif job.status.value == 'running' %}
+          Rendering on {{ job.worker_name or 'the imager' }}…
+        {% else %}
+          Queued…
+        {% endif %}
+      </div>
+      {% if job.status.value == 'waking' %}
+        <div class="text-[10px] text-slate-400 mt-1">
+          Cold start takes a minute or two — boot, Docker, then the checkpoint loads.
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <div class="p-3 border-t border-slate-100">
+    <div class="text-xs text-slate-700 line-clamp-3">{{ job.prompt }}</div>
+    <div class="text-[10px] text-slate-400 font-mono mt-1.5 flex flex-wrap gap-x-2">
+      <span>{{ job.params.get('width', '?') }}×{{ job.params.get('height', '?') }}</span>
+      <span>{{ job.params.get('steps', '?') }} steps</span>
+      <span>cfg {{ job.params.get('cfg', '?') }}</span>
+      {% if job.result and job.result.checkpoint %}
+        <span title="what actually ran">{{ job.result.checkpoint }}</span>
+      {% endif %}
+      {% if job.result and job.result.images %}
+        <span>seed {{ job.result.images[0].seed }}</span>
+      {% endif %}
+      {% if job.source.value != 'module' %}
+        <span class="px-1 rounded bg-slate-100 text-slate-500">{{ job.source.value }}</span>
+      {% endif %}
+    </div>
+    {% if job.status.value in ('done', 'error') %}
+      <form method="post" action="/darkroom/jobs/{{ job.id }}/reroll" class="mt-2">
+        <button class="text-[11px] text-slate-500 hover:text-slate-900 hover:underline">
+          ↻ Re-roll (new seed)
+        </button>
+      </form>
+    {% endif %}
+  </div>
+</div>

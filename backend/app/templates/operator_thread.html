@@ -79,6 +79,38 @@
           {% endif %}
         </div>
       </div>
+    {% elif m.role.value == 'tool' and m.tool_name == 'generate_image' %}
+      {# Darkroom render inside a chat turn. The model only ever saw a URL;
+         this is where the picture actually shows up for the user. #}
+      {% set p = m.tool_payload or {} %}
+      <div class="flex justify-start">
+        <div class="bg-white border border-slate-200 rounded-lg p-2 max-w-2xl w-full text-sm">
+          {% if p.get('ok') and p.get('url') %}
+            <a href="{{ p.url }}" target="_blank" rel="noopener noreferrer">
+              <img src="{{ p.get('thumb_url') or p.url }}"
+                   onerror="this.src='{{ p.url }}'"
+                   alt="{{ p.get('prompt', '') }}"
+                   class="rounded w-full h-auto max-w-md">
+            </a>
+            <div class="text-[10px] text-slate-400 font-mono mt-1.5 flex flex-wrap gap-x-2">
+              <span>🎨 generated</span>
+              {% if p.get('checkpoint') %}<span>{{ p.checkpoint }}</span>{% endif %}
+              {% if p.get('seed') is not none %}<span>seed {{ p.seed }}</span>{% endif %}
+              <a href="/darkroom" class="hover:underline ml-auto">open in Darkroom</a>
+            </div>
+          {% elif p.get('pending') %}
+            <div class="text-slate-600 flex items-center gap-2">
+              <span class="animate-pulse">🎨</span>
+              <span>Still rendering —
+                <a href="/darkroom" class="underline">it'll appear in Darkroom</a>.</span>
+            </div>
+          {% else %}
+            <div class="text-rose-700 text-xs">
+              🎨 Image generation failed: {{ p.get('error', 'unknown error') }}
+            </div>
+          {% endif %}
+        </div>
+      </div>
     {% elif m.role.value == 'assistant' %}
       <div class="flex justify-start">
         <div class="bg-white border border-slate-200 rounded-lg px-3 py-2 max-w-2xl w-full">

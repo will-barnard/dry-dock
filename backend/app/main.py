@@ -15,11 +15,14 @@ from app.auth import AuthRedirect, get_current_user
 from app.config import get_settings
 from app.db import Base, engine
 from app.orchestrator.dispatcher import dispatcher
+from app.orchestrator.image_jobs import image_watchdog_loop
 from app.orchestrator.workbench_jobs import workbench_watchdog_loop
 from app.routes import (
     auth,
     dashboard,
+    darkroom as darkroom_routes,
     generate as generate_routes,
+    image as image_routes,
     operator as operator_routes,
     projects,
     remote_machines as remote_machines_routes,
@@ -128,6 +131,14 @@ async def lifespan(app: FastAPI):
     workbench_watchdog_task = asyncio.create_task(
         workbench_watchdog_loop(workbench_watchdog_stop), name="workbench_watchdog"
     )
+    # Darkroom watchdog — same job for image renders. Without it, an
+    # orchestrator restart mid-render leaves a row spinning forever: the driver
+    # task died with the process but the row never found out. It also runs the
+    # image retention sweep.
+    image_watchdog_stop = asyncio.Event()
+    image_watchdog_task = asyncio.create_task(
+        image_watchdog_loop(image_watchdog_stop), name="image_watchdog"
+    )
     log.info("orchestrator.started")
     try:
         yield
@@ -136,6 +147,11 @@ async def lifespan(app: FastAPI):
         workbench_watchdog_stop.set()
         try:
             await asyncio.wait_for(workbench_watchdog_task, timeout=5.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+            pass
+        image_watchdog_stop.set()
+        try:
+            await asyncio.wait_for(image_watchdog_task, timeout=5.0)
         except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
             pass
         await engine.dispose()
@@ -185,6 +201,10 @@ app.include_router(workers.router)  # /ws/worker
 # server-to-server callers (seedbook, etc.) can reach it. See DRYDOCK-API.md.
 app.include_router(generate_routes.router)  # /api/v1/generate
 
+# Darkroom's public image API — same deal, same key. Submit/poll rather than
+# blocking, because a sleeping GPU box has a 60-170s cold path. See IMAGE-API.md.
+app.include_router(image_routes.router)  # /api/v1/image
+
 
 # ── Authed endpoints ────────────────────────────────────────────────
 # `dependencies=[Depends(get_current_user)]` applies the auth gate to every
@@ -208,3 +228,4 @@ app.include_router(remote_machines_routes.router, dependencies=_auth)
 app.include_router(operator_routes.router, dependencies=_auth)
 app.include_router(workbench_routes.router, dependencies=_auth)
 app.include_router(scout_routes.router, dependencies=_auth)
+app.include_router(darkroom_routes.router, dependencies=_auth)

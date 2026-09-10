@@ -53,6 +53,18 @@ services:
       # Scout headless renderer (internal service).
       RENDERER_URL: ${RENDERER_URL:-http://renderer:3000}
       RENDERER_TIMEOUT_SECONDS: ${RENDERER_TIMEOUT_SECONDS:-45.0}
+      # Darkroom (image generation). IMAGE_MACHINE must match a `name` in
+      # REMOTE_MACHINES_JSON — it's how the API path knows what to wake, since
+      # the dashboard's wake route is cookie-gated and unreachable with an API
+      # key. Leave it blank to disable auto-wake entirely.
+      IMAGE_DIR: ${IMAGE_DIR:-/var/lib/drydock/images}
+      IMAGE_MACHINE: ${IMAGE_MACHINE:-}
+      IMAGE_WAKE_TIMEOUT_SECONDS: ${IMAGE_WAKE_TIMEOUT_SECONDS:-180}
+      IMAGE_JOB_TIMEOUT_SECONDS: ${IMAGE_JOB_TIMEOUT_SECONDS:-300}
+      IMAGE_MAX_BATCH: ${IMAGE_MAX_BATCH:-4}
+      IMAGE_RETENTION_DAYS: ${IMAGE_RETENTION_DAYS:-0}
+      IMAGE_DAILY_BUDGET: ${IMAGE_DAILY_BUDGET:-0}
+      IMAGE_DEFAULT_WORKFLOW: ${IMAGE_DEFAULT_WORKFLOW:-sdxl_txt2img}
       LOG_LEVEL: INFO
     expose:
       - "8000"
@@ -61,6 +73,9 @@ services:
         condition: service_healthy
     volumes:
       - repos_data:/var/lib/drydock/repos
+      # Rendered images. Fixed volume name, same as repos_data — that's what
+      # survives a Beachhead blue/green swap.
+      - images_data:/var/lib/drydock/images
     # Backend reaches the host-side WoL/shutdown agent at host.docker.internal.
     # Docker Desktop for Mac wires this automatically; the explicit entry is
     # belt-and-suspenders in case Beachhead runs the daemon under colima or
@@ -103,6 +118,8 @@ volumes:
     name: dry-dock-postgres
   repos_data:
     name: dry-dock-repos
+  images_data:
+    name: dry-dock-images
 
 networks:
   internal:

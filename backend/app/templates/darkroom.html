@@ -86,7 +86,7 @@
       <summary class="text-xs text-slate-500 cursor-pointer hover:text-slate-800">Advanced</summary>
       <div class="flex flex-wrap gap-3 items-end mt-2">
         <label class="flex flex-col">
-          <span class="text-xs text-slate-500">size</span>
+          <span class="text-xs text-slate-500 cursor-help decoration-dotted underline underline-offset-2" title="1024x1024 is SDXL's native resolution, not its 'big' option. Smaller is genuinely worse, not just faster.">size</span>
           <select name="size" class="border border-slate-300 rounded px-2 py-1">
             {% for label, w, h in size_presets %}
               <option value="{{ w }}x{{ h }}">{{ label }}</option>
@@ -94,52 +94,105 @@
           </select>
         </label>
         <label class="flex flex-col">
-          <span class="text-xs text-slate-500">checkpoint</span>
+          <span class="text-xs text-slate-500 cursor-help decoration-dotted underline underline-offset-2" title="The model. The biggest lever here by far - swap this before touching anything else.">checkpoint</span>
           <select name="checkpoint" class="border border-slate-300 rounded px-2 py-1 font-mono text-xs">
             <option value="">worker default</option>
             {% for c in checkpoints %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
           </select>
         </label>
         <label class="flex flex-col">
-          <span class="text-xs text-slate-500" title="sdxl_hires runs a second upscale pass — better detail, roughly twice the time">workflow</span>
+          <span class="text-xs text-slate-500 cursor-help decoration-dotted underline underline-offset-2" title="The recipe. sdxl_txt2img is one pass; sdxl_hires renders, upscales, then refines - better fine detail, roughly twice the time.">workflow</span>
           <select name="workflow" class="border border-slate-300 rounded px-2 py-1 font-mono text-xs">
             {% for w in workflows %}<option value="{{ w }}">{{ w }}</option>{% endfor %}
           </select>
         </label>
         <label class="flex flex-col">
-          <span class="text-xs text-slate-500">sampler</span>
+          <span class="text-xs text-slate-500 cursor-help decoration-dotted underline underline-offset-2" title="The denoising algorithm. dpmpp_2m is the safe workhorse; dpmpp_3m_sde adds texture.">sampler</span>
           <select name="sampler" class="border border-slate-300 rounded px-2 py-1 font-mono text-xs">
             <option value="">workflow default</option>
             {% for sm in samplers %}<option value="{{ sm }}">{{ sm }}</option>{% endfor %}
           </select>
         </label>
         <label class="flex flex-col">
-          <span class="text-xs text-slate-500">scheduler</span>
+          <span class="text-xs text-slate-500 cursor-help decoration-dotted underline underline-offset-2" title="How noise is paced across the steps. karras is cleaner at moderate step counts.">scheduler</span>
           <select name="scheduler" class="border border-slate-300 rounded px-2 py-1 font-mono text-xs">
             <option value="">workflow default</option>
             {% for sc in schedulers %}<option value="{{ sc }}">{{ sc }}</option>{% endfor %}
           </select>
         </label>
         <label class="flex flex-col">
-          <span class="text-xs text-slate-500">steps</span>
+          <span class="text-xs text-slate-500 cursor-help decoration-dotted underline underline-offset-2" title="Denoising iterations. 25-35 is the whole useful range; past ~50 you're burning time for no visible gain.">steps</span>
           <input name="steps" type="number" value="30" min="1" max="80"
                  class="border border-slate-300 rounded px-2 py-1 w-20">
         </label>
         <label class="flex flex-col">
-          <span class="text-xs text-slate-500">cfg</span>
+          <span class="text-xs text-slate-500 cursor-help decoration-dotted underline underline-offset-2" title="How literally it obeys your prompt - not a quality dial. 5-7 is the band. Higher goes contrasty and fried.">cfg</span>
           <input name="cfg" type="number" value="6.0" step="0.5" min="0" max="30"
                  class="border border-slate-300 rounded px-2 py-1 w-20">
         </label>
         <label class="flex flex-col">
-          <span class="text-xs text-slate-500">seed</span>
+          <span class="text-xs text-slate-500 cursor-help decoration-dotted underline underline-offset-2" title="The starting noise. Same seed + same settings = the same image every time. Blank = random.">seed</span>
           <input name="seed" placeholder="random" inputmode="numeric"
                  class="border border-slate-300 rounded px-2 py-1 w-32 font-mono">
         </label>
         <label class="flex flex-col">
-          <span class="text-xs text-slate-500">batch</span>
+          <span class="text-xs text-slate-500 cursor-help decoration-dotted underline underline-offset-2" title="Several images in one job, sharing a seed. Cheaper than running separate jobs.">batch</span>
           <input name="batch" type="number" value="1" min="1" max="{{ max_batch }}"
                  class="border border-slate-300 rounded px-2 py-1 w-20">
         </label>
+      </div>
+
+      {# Same text as the hover hints, spelled out — hovering is no use on a
+         phone, and you shouldn't have to discover a control to learn it. #}
+      <div class="mt-4 pt-3 border-t border-slate-100">
+        <div class="text-[10px] uppercase tracking-wide text-slate-400 mb-2">What these do</div>
+        <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 text-xs text-slate-500 leading-relaxed">
+          <div>
+            <dt class="inline font-mono text-slate-700">checkpoint</dt>
+            <dd class="inline m-0">— the model, and the biggest lever here by far. Swap it before touching anything else.</dd>
+          </div>
+          <div>
+            <dt class="inline font-mono text-slate-700">workflow</dt>
+            <dd class="inline m-0">— the recipe. <span class="font-mono">txt2img</span> is one pass;
+              <span class="font-mono">hires</span> renders, upscales, then refines: better fine detail, roughly twice the time.</dd>
+          </div>
+          <div>
+            <dt class="inline font-mono text-slate-700">size</dt>
+            <dd class="inline m-0">— 1024×1024 is SDXL's <em>native</em> resolution, not its "big" option. Smaller is genuinely worse, not just faster.</dd>
+          </div>
+          <div>
+            <dt class="inline font-mono text-slate-700">steps</dt>
+            <dd class="inline m-0">— denoising iterations. 25–35 is the whole useful range; past ~50 you're burning time.
+              With <span class="font-mono">hires</span> this drives the first pass only.</dd>
+          </div>
+          <div>
+            <dt class="inline font-mono text-slate-700">cfg</dt>
+            <dd class="inline m-0">— how literally it obeys the prompt, <em>not</em> a quality dial. 5–7 is the band; higher goes contrasty and fried.</dd>
+          </div>
+          <div>
+            <dt class="inline font-mono text-slate-700">sampler</dt>
+            <dd class="inline m-0">— the denoising algorithm. <span class="font-mono">dpmpp_2m</span> is the safe workhorse,
+              <span class="font-mono">dpmpp_3m_sde</span> adds texture. Anything <span class="font-mono">_ancestral</span> never fully settles.</dd>
+          </div>
+          <div>
+            <dt class="inline font-mono text-slate-700">scheduler</dt>
+            <dd class="inline m-0">— how noise is paced across the steps. <span class="font-mono">karras</span> is cleaner at moderate step counts; pair it with <span class="font-mono">dpmpp_*</span>.</dd>
+          </div>
+          <div>
+            <dt class="inline font-mono text-slate-700">seed</dt>
+            <dd class="inline m-0">— the starting noise. Same seed and settings reproduce the same image exactly. Blank means random, and the one used is shown on the card.</dd>
+          </div>
+          <div>
+            <dt class="inline font-mono text-slate-700">batch</dt>
+            <dd class="inline m-0">— several images in one job, sharing a seed. Cheaper than separate jobs because the model loads once.</dd>
+          </div>
+          <div>
+            <dt class="inline text-slate-700">a starting point</dt>
+            <dd class="inline m-0">— a photoreal checkpoint, <span class="font-mono">sdxl_hires</span>, 1024×1024, 30 steps, cfg 6,
+              <span class="font-mono">dpmpp_3m_sde</span> + <span class="font-mono">karras</span>, seed blank. Then leave these alone
+              and work on the prompt — it does more than any of them.</dd>
+          </div>
+        </dl>
       </div>
     </details>
 

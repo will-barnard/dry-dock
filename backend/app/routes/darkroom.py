@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import structlog
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
@@ -31,6 +31,7 @@ from app.models import ImageJob, ImageJobSource, User
 from app.orchestrator.image_jobs import (
     ImageError,
     image_path,
+    input_path,
     imager_status,
     submit_job,
 )
@@ -101,6 +102,7 @@ async def darkroom(
             "workflows": workflows or [get_settings().image_default_workflow],
             # Fall back to the names every ComfyUI build ships, so the controls
             # still work if the probe failed at register time.
+            "img2img_workflow": get_settings().image_img2img_workflow,
             "samplers": samplers or FALLBACK_SAMPLERS,
             "schedulers": schedulers or FALLBACK_SCHEDULERS,
             "size_presets": SIZE_PRESETS,
@@ -123,11 +125,21 @@ async def generate_image(
     scheduler: str = Form(""),
     seed: str = Form(""),
     batch: int = Form(1),
+    denoise: float = Form(0.6),
+    init_image: UploadFile | None = File(default=None),
 ) -> RedirectResponse:
     try:
         width, height = (int(x) for x in size.lower().split("x", 1))
     except ValueError:
         width, height = 1024, 1024
+
+    # An empty file input still arrives as an UploadFile with no filename.
+    raw: bytes | None = None
+    if init_image is not None and init_image.filename:
+        raw = await init_image.read()
+        if not raw:
+            raw = None
+
     try:
         await submit_job(
             prompt,
@@ -146,8 +158,10 @@ async def generate_image(
                 "scheduler": scheduler or None,
                 "seed": int(seed) if seed.strip().isdigit() else None,
                 "batch": batch,
+                "denoise": denoise,
             },
             source=ImageJobSource.MODULE,
+            init_image=raw,
         )
     except ImageError as exc:
         # Bounce back to the module with the reason rather than an error page —
@@ -169,11 +183,18 @@ async def reroll(
         raise HTTPException(404, "No such job.")
     params = dict(job.params or {})
     params["seed"] = random.randint(0, 2**32 - 1)
+    # Carry the source image forward, otherwise re-rolling an img2img job
+    # silently turns it into a text-to-image one.
+    raw = None
+    if params.get("has_input"):
+        src = input_path(job.id)
+        raw = src.read_bytes() if src.exists() else None
     await submit_job(
         job.prompt,
         negative_prompt=job.negative_prompt,
         params=params,
         source=ImageJobSource.MODULE,
+        init_image=raw,
     )
     return RedirectResponse("/darkroom", status_code=303)
 
@@ -255,6 +276,20 @@ async def refine_prompt(request: Request, prompt: str = Form(...)) -> HTMLRespon
         request,
         "_darkroom_refined.html",
         {"prompt": refined, "negative": negative, "worker": result.get("worker")},
+    )
+
+
+@router.get("/darkroom/inputs/{job_id}/{filename}")
+async def darkroom_input(job_id: uuid.UUID, filename: str) -> Response:
+    """The source image of an img2img job (cookie-gated, like its outputs)."""
+    thumb = filename.startswith("input_thumb")
+    path = input_path(job_id, thumb=thumb)
+    if not path.exists():
+        raise HTTPException(404, "Not found.")
+    return Response(
+        content=path.read_bytes(),
+        media_type="image/webp" if thumb else "image/png",
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
     )
 
 

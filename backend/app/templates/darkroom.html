@@ -1,5 +1,22 @@
 {% extends "base.html" %}
-{% block title %}Darkroom — image generation{% endblock %}
+{% block title %}Darkroom — image generation<script>
+  // The denoise controls are meaningless without a source image, so they stay
+  // hidden until there is one.
+  (function () {
+    var file = document.getElementById("init_image");
+    var opts = document.getElementById("img2img-opts");
+    var range = document.getElementById("denoise");
+    var out = document.getElementById("denoise-out");
+    if (!file || !opts || !range || !out) return;
+    function sync() { out.textContent = Number(range.value).toFixed(2); }
+    file.addEventListener("change", function () {
+      opts.classList.toggle("hidden", !file.files || !file.files.length);
+    });
+    range.addEventListener("input", sync);
+    sync();
+  })();
+</script>
+{% endblock %}
 {% block content %}
 <nav class="text-sm text-slate-500 mb-4"><a href="/" class="hover:underline">Modules</a> / Darkroom</nav>
 
@@ -53,7 +70,7 @@
 {% endif %}
 
 <section class="bg-white border border-slate-200 rounded p-4 mb-6">
-  <form method="post" action="/darkroom/generate" class="text-sm">
+  <form method="post" action="/darkroom/generate" enctype="multipart/form-data" class="text-sm">
     <label class="block">
       <span class="text-xs text-slate-500">prompt</span>
       <textarea id="prompt" name="prompt" required rows="3"
@@ -74,6 +91,33 @@
       <span id="refining" class="htmx-indicator text-xs text-slate-400">thinking…</span>
     </div>
     <div id="refined"></div>
+
+    <div class="mt-3 border border-dashed border-slate-300 rounded p-3">
+      <label class="flex flex-wrap items-center gap-2">
+        <span class="text-xs text-slate-500">start from an image (optional)</span>
+        <input type="file" name="init_image" id="init_image" accept="image/*"
+               class="text-xs file:mr-2 file:px-2 file:py-1 file:rounded file:border-0
+                      file:bg-slate-900 file:text-white file:text-xs">
+      </label>
+      <div id="img2img-opts" class="hidden mt-3 flex flex-wrap items-end gap-4">
+        <label class="flex flex-col flex-1 min-w-[14rem]">
+          <span class="text-xs text-slate-500 flex justify-between">
+            <span>how much to change it</span>
+            <output id="denoise-out" class="font-mono text-slate-700">0.60</output>
+          </span>
+          <input name="denoise" id="denoise" type="range" min="0.05" max="1" step="0.05"
+                 value="0.6" class="mt-1 accent-slate-900">
+          <span class="text-[10px] text-slate-400 flex justify-between mt-0.5">
+            <span>0.2 · retouch</span><span>0.6 · restyle</span><span>1.0 · ignore it</span>
+          </span>
+        </label>
+        <p class="text-[11px] text-slate-500 flex-1 min-w-[14rem]">
+          Runs the <span class="font-mono">{{ img2img_workflow }}</span> workflow, whatever
+          else is selected below. The output takes its size from your image, so the
+          <span class="font-mono">size</span> control is ignored.
+        </p>
+      </div>
+    </div>
 
     <label class="block mt-3">
       <span class="text-xs text-slate-500">negative prompt (optional)</span>
@@ -185,6 +229,16 @@
           <div>
             <dt class="inline font-mono text-slate-700">batch</dt>
             <dd class="inline m-0">— several images in one job, sharing a seed. Cheaper than separate jobs because the model loads once.</dd>
+          </div>
+          <div>
+            <dt class="inline font-mono text-slate-700">start from an image</dt>
+            <dd class="inline m-0">— img2img. Your picture is encoded and used as the starting point instead of pure noise.
+              It's resized to about a megapixel first, and the output matches its shape.</dd>
+          </div>
+          <div>
+            <dt class="inline font-mono text-slate-700">how much to change it</dt>
+            <dd class="inline m-0">— how much of your image to throw away. 0.2 retouches, 0.6 restyles,
+              0.85 keeps little but the composition, 1.0 ignores it entirely.</dd>
           </div>
           <div>
             <dt class="inline text-slate-700">a starting point</dt>

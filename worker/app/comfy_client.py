@@ -154,6 +154,33 @@ class ComfyClient:
             log.warning("comfy.list_samplers_failed", error=str(exc))
             return [], []
 
+    async def upload_image(self, data: bytes, filename: str) -> str:
+        """Push an image into ComfyUI's input folder and return its name.
+
+        ComfyUI's LoadImage node takes a *filename*, not bytes — it reads from
+        its own input directory. So an img2img job is always two steps: upload,
+        then reference the returned name in the graph. `overwrite` keeps the
+        input folder from filling up with one file per render.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.post(
+                    f"{self.base_url}/upload/image",
+                    files={"image": (filename, data, "image/png")},
+                    data={"overwrite": "true"},
+                )
+                r.raise_for_status()
+                body = r.json()
+        except httpx.HTTPError as exc:
+            raise ComfyError(f"Couldn't upload the source image to ComfyUI: {exc}") from exc
+
+        name = body.get("name")
+        if not name:
+            raise ComfyError(f"ComfyUI accepted the upload but named no file: {body}")
+        subfolder = body.get("subfolder") or ""
+        # LoadImage addresses a file in a subfolder as "sub/name".
+        return f"{subfolder}/{name}" if subfolder else str(name)
+
     async def submit(self, graph: dict) -> str:
         payload = {"prompt": graph, "client_id": self.client_id}
         try:

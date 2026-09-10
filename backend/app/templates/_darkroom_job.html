@@ -47,6 +47,20 @@
   {% endif %}
 
   <div class="p-3 border-t border-slate-100">
+    {% if job.params.get('has_input') %}
+      <div class="flex items-start gap-2 mb-2">
+        <a href="/darkroom/inputs/{{ job.id }}/input.png" target="_blank" class="shrink-0">
+          <img src="/darkroom/inputs/{{ job.id }}/input_thumb.webp"
+               onerror="this.src='/darkroom/inputs/{{ job.id }}/input.png'"
+               alt="source image"
+               class="w-12 h-12 object-cover rounded border border-slate-200">
+        </a>
+        <div class="text-[10px] text-slate-400 leading-tight pt-0.5">
+          <div class="uppercase tracking-wide">started from this</div>
+          <div class="font-mono">denoise {{ '%.2f' | format(job.params.get('denoise', 0.6)) }}</div>
+        </div>
+      </div>
+    {% endif %}
     <div class="text-xs text-slate-700 line-clamp-3">{{ job.prompt }}</div>
     <div class="text-[10px] text-slate-400 font-mono mt-1.5 flex flex-wrap gap-x-2">
       <span>{{ job.params.get('width', '?') }}×{{ job.params.get('height', '?') }}</span>

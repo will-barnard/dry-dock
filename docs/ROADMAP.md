@@ -34,9 +34,12 @@ Standing up the box: `docs/DARKROOM-SETUP.md`.
 
 Follow-ons, in the order they'd be worth doing:
 
-- [ ] **img2img + inpainting**, which is where Darkroom meets listing photos:
-  background replacement and cleanup for Gearline. The transport already
-  carries it — add `init_image_b64` / `mask_b64` and a named workflow.
+- [x] **img2img** — upload a source image and transform it (`sdxl_img2img`,
+  `denoise`, uploads normalised to ~1MP server-side). Shipped Sept 2026.
+- [ ] **Inpainting / masking**, the other half of the Gearline use case:
+  background replacement rather than whole-image restyling. Needs a mask in
+  the UI (brush or rectangle), `mask_b64` on `ImageRequestMsg` — already
+  anticipated in the design — and a `VAEEncodeForInpaint` workflow.
 - [ ] **Prompt library** — save a prompt + parameter set as a reusable preset,
   since `params` is already stored as a blob.
 - [ ] **Model preference per workflow**, mirroring the Phase 4 idea for text.

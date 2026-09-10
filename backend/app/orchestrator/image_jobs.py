@@ -209,6 +209,80 @@ def image_path(job_id: uuid.UUID, index: int, thumb: bool = False) -> Path:
     return job_dir(job_id) / name
 
 
+def input_path(job_id: uuid.UUID, thumb: bool = False) -> Path:
+    """The source image for an img2img job, kept beside its outputs so the
+    gallery can show what it started from and a re-roll can reuse it."""
+    return job_dir(job_id) / ("input_thumb.webp" if thumb else "input.png")
+
+
+# SDXL is trained around one megapixel. A 12-megapixel phone photo fed in at
+# full size is both slow and worse — the model loses coherence well above its
+# training resolution — so every upload is scaled to roughly native area with
+# its aspect ratio kept.
+_TARGET_PIXELS = 1024 * 1024
+
+
+def prepare_init_image(raw: bytes) -> tuple[bytes, int, int]:
+    """Normalise an uploaded image: RGB, ~1MP, dimensions divisible by 8, PNG.
+
+    Returns (png_bytes, width, height). Raises ImageError on anything that
+    isn't a decodable image, so a bad upload fails at the form rather than
+    deep inside a render.
+    """
+    import io
+
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ImageError(
+            "That file doesn't look like an image we can read.", status=422
+        ) from exc
+
+    # Flatten transparency onto white rather than letting RGBA reach the VAE.
+    if img.mode in ("RGBA", "LA", "P"):
+        img = img.convert("RGBA")
+        flat = Image.new("RGB", img.size, (255, 255, 255))
+        flat.paste(img, mask=img.split()[-1])
+        img = flat
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+
+    w, h = img.size
+    if w < 8 or h < 8:
+        raise ImageError("That image is too small to work with.", status=422)
+
+    scale = (_TARGET_PIXELS / (w * h)) ** 0.5
+    new_w = max(256, min(MAX_DIM, int(round(w * scale))))
+    new_h = max(256, min(MAX_DIM, int(round(h * scale))))
+    new_w -= new_w % 8
+    new_h -= new_h % 8
+    if (new_w, new_h) != (w, h):
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue(), new_w, new_h
+
+
+def _write_input_image(job_id: uuid.UUID, data: bytes) -> None:
+    d = job_dir(job_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "input.png").write_bytes(data)
+    try:
+        import io
+
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(data))
+        img.thumbnail((512, 512))
+        img.save(d / "input_thumb.webp", "WEBP", quality=82)
+    except Exception:  # noqa: BLE001
+        log.warning("image.input_thumbnail_failed", job=str(job_id))
+
+
 def _write_image(job_id: uuid.UUID, index: int, data: bytes) -> None:
     """Write the PNG and a small WEBP thumbnail beside it.
 
@@ -285,6 +359,9 @@ def normalize_params(raw: dict) -> dict:
         "scheduler": raw.get("scheduler") or None,
         "seed": raw.get("seed") if raw.get("seed") not in (None, "") else None,
         "batch": _clamp(raw.get("batch", 1), 1, settings.image_max_batch, 1),
+        # Only meaningful with a source image. Below ~0.15 the result is
+        # visually identical to the input; 1.0 discards it entirely.
+        "denoise": _clamp(raw.get("denoise", 0.6), 0.05, 1.0, 0.6),
     }
 
 
@@ -306,8 +383,15 @@ async def submit_job(
     params: dict | None = None,
     source: ImageJobSource = ImageJobSource.MODULE,
     conversation_id: uuid.UUID | None = None,
+    init_image: bytes | None = None,
 ) -> ImageJob:
-    """Create the job row and start its driver task. Returns immediately."""
+    """Create the job row and start its driver task. Returns immediately.
+
+    `init_image` turns this into an img2img job: the bytes are normalised and
+    written beside the job's outputs, and the driver hands them to the worker
+    at dispatch time. Storing rather than holding in memory is what lets a
+    re-roll reuse the same source.
+    """
     if not (prompt or "").strip():
         raise ImageError("Prompt is empty.", status=422)
 
@@ -333,6 +417,25 @@ async def submit_job(
         )
 
     normalized = normalize_params(params or {})
+
+    prepared: bytes | None = None
+    if init_image is not None:
+        cap = settings.image_max_upload_mb * 1024 * 1024
+        if len(init_image) > cap:
+            raise ImageError(
+                f"That image is larger than the {settings.image_max_upload_mb:.0f}MB limit.",
+                status=422,
+            )
+        prepared, in_w, in_h = prepare_init_image(init_image)
+        # A txt2img template has nowhere to put a source image, so switch
+        # rather than accept the upload and silently ignore it.
+        if normalized["workflow"] != settings.image_img2img_workflow:
+            normalized["workflow"] = settings.image_img2img_workflow
+        # Output size comes from the source image; record what it'll be so the
+        # card doesn't display the width/height the form happened to send.
+        normalized["width"], normalized["height"] = in_w, in_h
+        normalized["has_input"] = True
+
     async with SessionLocal() as session:
         async with session.begin():
             job = ImageJob(
@@ -345,6 +448,9 @@ async def submit_job(
             )
             session.add(job)
         await session.refresh(job)
+
+    if prepared is not None:
+        _write_input_image(job.id, prepared)
 
     asyncio.create_task(_drive_job(job.id), name=f"image_job_{job.id}")
     log.info("image.submitted", job=str(job.id), source=source.value)
@@ -373,6 +479,15 @@ async def _drive_job(job_id: uuid.UUID) -> None:
         if seed is None:
             seed = random.randint(0, 2**32 - 1)
 
+        init_b64: str | None = None
+        if params.get("has_input"):
+            src = input_path(job_id)
+            if not src.exists():
+                raise ImageError(
+                    "The source image for this job is missing from disk.", status=410
+                )
+            init_b64 = base64.b64encode(src.read_bytes()).decode("ascii")
+
         msg = ImageRequestMsg(
             job_id=job_id,
             workflow=params.get("workflow") or settings.image_default_workflow,
@@ -387,11 +502,14 @@ async def _drive_job(job_id: uuid.UUID) -> None:
             scheduler=params.get("scheduler"),
             seed=seed,
             batch=params.get("batch", 1),
+            init_image_b64=init_b64,
+            denoise=params.get("denoise", 0.6),
         )
         await _set_status(job_id, ImageJobStatus.RUNNING, worker_name=worker.name)
         await worker.send(msg.model_dump(mode="json"))
         log.info("image.dispatched", job=str(job_id), worker=worker.name,
-                 workflow=msg.workflow, batch=msg.batch)
+                 workflow=msg.workflow, batch=msg.batch,
+                 img2img=bool(init_b64), denoise=msg.denoise if init_b64 else None)
 
         images: list[dict] = []
         checkpoint_used: str | None = None
@@ -591,7 +709,7 @@ async def _sweep_old_images() -> int:
         d = job_dir(job_id)
         if not d.exists():
             continue
-        for f in d.iterdir():
+        for f in d.iterdir():  # outputs, thumbnails and any source image
             try:
                 f.unlink()
             except OSError:

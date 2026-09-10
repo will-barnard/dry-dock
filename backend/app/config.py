@@ -131,6 +131,14 @@ class Settings(BaseSettings):
     image_default_workflow: str = Field(
         default="sdxl_txt2img", alias="IMAGE_DEFAULT_WORKFLOW"
     )
+    # Workflow used when a request carries a source image. A txt2img template
+    # has nowhere to put one, so we switch rather than silently ignore it.
+    image_img2img_workflow: str = Field(
+        default="sdxl_img2img", alias="IMAGE_IMG2IMG_WORKFLOW"
+    )
+    # Ceiling on an uploaded source image before resizing. Phone photos are
+    # ~5MB; this is generous without letting someone post a 200MB TIFF.
+    image_max_upload_mb: float = Field(default=25.0, alias="IMAGE_MAX_UPLOAD_MB")
 
     # User-Agent for the fetch_url tool. Defaults to a mainstream browser
     # string — an honest bot UA gets 403'd by Cloudflare-fronted sites.

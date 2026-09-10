@@ -150,6 +150,9 @@ class Worker:
             metadata["workflows"] = sorted(self.workflows)
             metadata["samplers"] = self.samplers
             metadata["schedulers"] = self.schedulers
+            # Which workflows can take a source image, so the UI knows when to
+            # offer an upload rather than guessing from the name.
+            metadata["img2img_workflows"] = self.img2img_workflows()
             metadata["comfyui"] = self.settings.comfyui_base_url
             if not self.checkpoints:
                 log.warning(
@@ -493,6 +496,14 @@ class Worker:
             hint="registering without checkpoints; ComfyUI may not be running",
         )
 
+    def img2img_workflows(self) -> list[str]:
+        """Templates that declare an image input, for error messages and for
+        the register payload."""
+        return sorted(
+            name for name, t in self.workflows.items()
+            if t.get("accepts_init_image")
+        )
+
     async def refresh_checkpoints(self) -> None:
         """Re-probe ComfyUI for checkpoints. Called before a render when the
         list is empty, so a worker that registered ahead of ComfyUI recovers on
@@ -555,6 +566,24 @@ class Worker:
                         f"{sorted(self.workflows) or 'none'}"
                     )
                 checkpoint = self._resolve_checkpoint(req.checkpoint, template)
+
+                # img2img: ComfyUI's LoadImage reads a filename from its own
+                # input folder, so the bytes have to go over there first.
+                init_image = None
+                if req.init_image_b64:
+                    if not template.get("accepts_init_image"):
+                        raise ComfyError(
+                            f"workflow '{req.workflow}' has no image input — "
+                            "pick one that accepts a source image "
+                            f"({', '.join(self.img2img_workflows()) or 'none installed'})"
+                        )
+                    init_image = await self.comfy.upload_image(
+                        base64.b64decode(req.init_image_b64),
+                        f"drydock_{req.job_id}.png",
+                    )
+                    log.info("comfy.init_image_uploaded",
+                             job=str(req.job_id), name=init_image)
+
                 graph = render_graph(template, {
                     "checkpoint": checkpoint,
                     "prompt": req.prompt,
@@ -567,6 +596,10 @@ class Worker:
                     "cfg": req.cfg,
                     "sampler": req.sampler,
                     "scheduler": req.scheduler,
+                    "init_image": init_image,
+                    # Only forward denoise when there's an image to preserve;
+                    # a txt2img template's KSampler must stay at 1.0.
+                    "denoise": req.denoise if req.init_image_b64 else None,
                 })
 
             prompt_id = await self.comfy.submit(graph)

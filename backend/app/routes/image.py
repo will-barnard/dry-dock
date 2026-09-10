@@ -19,6 +19,8 @@ See IMAGE-API.md in the repo root for the full contract and drop-in clients.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import uuid
 
 from fastapi import APIRouter, Header, HTTPException, Response
@@ -65,6 +67,25 @@ class ImageRequest(BaseModel):
         default=None, description="Omit for a random seed (reported back in the result)."
     )
     batch: int = Field(default=1, description="Images to render. Capped server-side.")
+    init_image_b64: str | None = Field(
+        default=None,
+        description=(
+            "Base64 source image for img2img. Any common format; it's decoded, "
+            "flattened to RGB and resized to about a megapixel server-side. "
+            "Supplying one switches the job to the img2img workflow, and the "
+            "output takes its dimensions from this image rather than "
+            "width/height."
+        ),
+    )
+    denoise: float | None = Field(
+        default=None,
+        description=(
+            "Only used with init_image_b64. How much of the source to discard: "
+            "~0.3 retouches, ~0.6 restyles, ~0.85 keeps just the composition. "
+            "Defaults to 0.6."
+        ),
+        gt=0, le=1.0,
+    )
     wait: float | None = Field(
         default=None,
         description=(
@@ -153,6 +174,13 @@ async def create_image(
 ) -> ImageJobResponse:
     require_api_key(x_api_key, authorization, what="Image API")
 
+    raw: bytes | None = None
+    if body.init_image_b64:
+        try:
+            raw = base64.b64decode(body.init_image_b64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(422, f"init_image_b64 isn't valid base64: {exc}") from exc
+
     try:
         job = await submit_job(
             body.prompt,
@@ -168,8 +196,10 @@ async def create_image(
                 "scheduler": body.scheduler,
                 "seed": body.seed,
                 "batch": body.batch,
+                "denoise": body.denoise if body.denoise is not None else 0.6,
             },
             source=ImageJobSource.API,
+            init_image=raw,
         )
     except ImageError as exc:
         raise HTTPException(exc.status, str(exc)) from exc

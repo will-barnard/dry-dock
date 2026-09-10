@@ -29,11 +29,22 @@ To add one:
 
 Parameters the orchestrator can send: `checkpoint`, `prompt`,
 `negative_prompt`, `width`, `height`, `batch`, `seed`, `steps`, `cfg`,
-`sampler`, `scheduler`.
+`sampler`, `scheduler`, and — for templates that set
+`"accepts_init_image": true` — `init_image` and `denoise`.
+
+`init_image` is special: the orchestrator sends image *bytes*, and the worker
+uploads them to ComfyUI's input folder first, then substitutes the returned
+*filename* into whatever node your map points at (a `LoadImage`). So map it to
+the `image` input of your LoadImage node and the plumbing is handled.
 
 Shipped templates:
 
 - **`sdxl_txt2img`** — single pass. Fast, and the default.
+- **`sdxl_img2img`** — starts from an uploaded image rather than noise.
+  Declares `"accepts_init_image": true`, which is how the orchestrator knows
+  it can take one and how the worker rejects a source image sent to a
+  workflow that can't use it. `width`/`height` are deliberately unmapped —
+  the output size comes from the source image via `VAEEncode`.
 - **`sdxl_hires`** — renders at the requested size, upscales the latent 1.5x,
   then runs a short low-denoise second pass. Better fine detail, roughly twice
   the time, and it's the one that actually stretches a 16GB card (the second

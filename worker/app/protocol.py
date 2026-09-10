@@ -210,6 +210,11 @@ class ImageRequestMsg(BaseModel):
     scheduler: str | None = None
     seed: int | None = None
     batch: int = 1
+    # img2img: base64 PNG to start from, already sized by the orchestrator.
+    init_image_b64: str | None = None
+    # 1.0 = ignore the init image entirely (plain txt2img), so this default
+    # keeps every existing workflow behaving exactly as before.
+    denoise: float = 1.0
 
 
 class ImageResultMsg(BaseModel):

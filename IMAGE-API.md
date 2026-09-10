@@ -63,9 +63,41 @@ otherwise — so unlike `/generate/health` this **is** a usable readiness gate.
   "scheduler": null,
   "seed": null,                 // omit for random — the seed used comes back
   "batch": 1,                   // capped by IMAGE_MAX_BATCH (default 4)
+  "init_image_b64": null,       // img2img — see below
+  "denoise": null,              // only with init_image_b64; defaults to 0.6
   "wait": null                  // optional; see below
 }
 ```
+
+### Starting from an image (img2img)
+
+Pass `init_image_b64` and the job transforms your picture instead of starting
+from noise. Any common format; it's decoded, flattened to RGB and resized to
+about a megapixel server-side, because SDXL is trained near that and a
+full-size phone photo is both slower and worse.
+
+Three consequences worth knowing:
+
+- **The output takes its dimensions from your image**, not from `width`/
+  `height`. Those are ignored.
+- **The workflow switches** to `IMAGE_IMG2IMG_WORKFLOW` (default
+  `sdxl_img2img`) whatever you asked for, because a text-to-image graph has
+  nowhere to put a source image and silently ignoring the upload would be
+  worse.
+- **`denoise` is the control that matters.** ~0.3 retouches, ~0.6 restyles,
+  ~0.85 keeps little more than the composition, 1.0 discards the image
+  entirely. It's ignored without `init_image_b64`.
+
+```bash
+curl -s "$DRYDOCK_BASE_URL/api/v1/image" \
+  -H "X-API-Key: $DRYDOCK_API_KEY" -H "Content-Type: application/json" \
+  -d "{\"prompt\":\"clean product photo on seamless white\",
+       \"denoise\":0.4,
+       \"init_image_b64\":\"$(base64 -w0 rhodes.jpg)\"}"
+```
+
+A file that isn't a decodable image comes back 422 before any job is created,
+so a bad upload fails at the call rather than deep inside a render.
 
 Returns **202** with the job:
 
@@ -247,6 +279,8 @@ Set in the Beachhead dashboard with no Target Service so they land in `.env`:
 | `IMAGE_WAKE_TIMEOUT_SECONDS` | 180 | wake → boot → Docker → worker registers |
 | `IMAGE_JOB_TIMEOUT_SECONDS` | 300 | ceiling on one render once dispatched |
 | `IMAGE_MAX_BATCH` | 4 | per-request image cap |
+| `IMAGE_IMG2IMG_WORKFLOW` | `sdxl_img2img` | workflow used when a request carries a source image |
+| `IMAGE_MAX_UPLOAD_MB` | 25 | ceiling on a source image before resizing |
 | `IMAGE_DAILY_BUDGET` | 0 | API-sourced images per day; 0 = no cap |
 | `IMAGE_RETENTION_DAYS` | 0 | delete rendered files after N days; 0 = keep |
 | `IMAGE_DEFAULT_WORKFLOW` | `sdxl_txt2img` | used when a request names none |

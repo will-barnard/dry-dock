@@ -280,6 +280,15 @@ class ImageRequestMsg(BaseModel):
     scheduler: str | None = None
     seed: int | None = None  # None → worker randomizes and reports what it used
     batch: int = 1  # capped orchestrator-side; see IMAGE_MAX_BATCH
+    # img2img: a starting image, base64 PNG. The orchestrator has already
+    # resized it to something the model was trained near, so the worker just
+    # uploads it to ComfyUI and points the graph at it. Output dimensions come
+    # from this image, not from width/height.
+    init_image_b64: str | None = None
+    # How much of the starting image to destroy. 1.0 is pure text-to-image and
+    # is the default precisely so a workflow with no init image is unaffected;
+    # ~0.3 retouches, ~0.6 restyles, ~0.8 keeps only the composition.
+    denoise: float = 1.0
 
 
 class ImageResultMsg(BaseModel):

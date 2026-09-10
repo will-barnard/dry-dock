@@ -71,6 +71,11 @@ def load_workflows() -> dict[str, dict]:
 def render_graph(template: dict, params: dict[str, Any]) -> dict:
     """Apply parameters to a template's graph via its `map`.
 
+    A map entry is either a single target `["6", "text"]` or a list of them,
+    `[["3", "seed"], ["11", "seed"]]` — multi-pass workflows need one parameter
+    to land on several nodes, so a hires template can drive both of its
+    samplers from one `seed`.
+
     A None parameter leaves the template's own default in place, so a template
     can carry sensible values for anything the caller doesn't care about.
     """
@@ -82,12 +87,14 @@ def render_graph(template: dict, params: dict[str, Any]) -> dict:
         target = mapping.get(name)
         if not target:
             continue  # this template doesn't expose that parameter
-        node_id, input_name = target[0], target[1]
-        node = graph.get(str(node_id))
-        if node is None:
-            log.warning("comfy.map_points_nowhere", param=name, node=node_id)
-            continue
-        node.setdefault("inputs", {})[input_name] = value
+        # Normalise single-target and multi-target forms to one shape.
+        targets = target if isinstance(target[0], (list, tuple)) else [target]
+        for node_id, input_name in targets:
+            node = graph.get(str(node_id))
+            if node is None:
+                log.warning("comfy.map_points_nowhere", param=name, node=node_id)
+                continue
+            node.setdefault("inputs", {})[input_name] = value
     return graph
 
 
@@ -125,6 +132,27 @@ class ComfyClient:
         except Exception as exc:  # noqa: BLE001
             log.warning("comfy.list_checkpoints_failed", error=str(exc))
             return []
+
+    async def list_samplers(self) -> tuple[list[str], list[str]]:
+        """The sampler and scheduler names this ComfyUI build actually offers.
+
+        Advertised at register time for the same reason checkpoints are: a
+        hardcoded list in the orchestrator goes stale the moment ComfyUI adds
+        a sampler, and offering one the box doesn't have produces a failure
+        deep in the render rather than a greyed-out option.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.get(f"{self.base_url}/object_info/KSampler")
+                r.raise_for_status()
+                req = r.json()["KSampler"]["input"]["required"]
+            return (
+                [str(x) for x in req["sampler_name"][0]],
+                [str(x) for x in req["scheduler"][0]],
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("comfy.list_samplers_failed", error=str(exc))
+            return [], []
 
     async def submit(self, graph: dict) -> str:
         payload = {"prompt": graph, "client_id": self.client_id}

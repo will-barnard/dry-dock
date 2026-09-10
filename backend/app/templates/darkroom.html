@@ -101,9 +101,23 @@
           </select>
         </label>
         <label class="flex flex-col">
-          <span class="text-xs text-slate-500">workflow</span>
+          <span class="text-xs text-slate-500" title="sdxl_hires runs a second upscale pass — better detail, roughly twice the time">workflow</span>
           <select name="workflow" class="border border-slate-300 rounded px-2 py-1 font-mono text-xs">
             {% for w in workflows %}<option value="{{ w }}">{{ w }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="flex flex-col">
+          <span class="text-xs text-slate-500">sampler</span>
+          <select name="sampler" class="border border-slate-300 rounded px-2 py-1 font-mono text-xs">
+            <option value="">workflow default</option>
+            {% for sm in samplers %}<option value="{{ sm }}">{{ sm }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="flex flex-col">
+          <span class="text-xs text-slate-500">scheduler</span>
+          <select name="scheduler" class="border border-slate-300 rounded px-2 py-1 font-mono text-xs">
+            <option value="">workflow default</option>
+            {% for sc in schedulers %}<option value="{{ sc }}">{{ sc }}</option>{% endfor %}
           </select>
         </label>
         <label class="flex flex-col">

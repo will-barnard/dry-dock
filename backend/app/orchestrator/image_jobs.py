@@ -121,6 +121,8 @@ async def imager_status() -> dict:
                 "busy": bool(w.current_image_jobs),
                 "checkpoints": (w.metadata or {}).get("checkpoints", []),
                 "workflows": (w.metadata or {}).get("workflows", []),
+                "samplers": (w.metadata or {}).get("samplers", []),
+                "schedulers": (w.metadata or {}).get("schedulers", []),
             }
             for w in workers
         ],

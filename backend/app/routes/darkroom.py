@@ -45,6 +45,14 @@ GALLERY_LIMIT = 60
 
 # Size presets that are friendly to SDXL's training resolutions. Free-form
 # width/height still work through the API; the UI offers the ones that behave.
+# Used only when the imager didn't advertise its own lists (probe failed, or
+# an older worker). The authoritative list always comes from ComfyUI itself.
+FALLBACK_SAMPLERS = [
+    "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_3m_sde", "dpmpp_sde",
+    "euler", "euler_ancestral", "ddim", "uni_pc",
+]
+FALLBACK_SCHEDULERS = ["karras", "normal", "exponential", "sgm_uniform", "simple", "beta"]
+
 SIZE_PRESETS: list[tuple[str, int, int]] = [
     ("Square 1024×1024", 1024, 1024),
     ("Portrait 832×1216", 832, 1216),
@@ -72,13 +80,16 @@ async def darkroom(
     # time, so the dropdown can never offer something the box doesn't have.
     checkpoints: list[str] = []
     workflows: list[str] = []
+    samplers: list[str] = []
+    schedulers: list[str] = []
     for w in status["imagers"]:
-        for c in w.get("checkpoints") or []:
-            if c not in checkpoints:
-                checkpoints.append(c)
-        for wf in w.get("workflows") or []:
-            if wf not in workflows:
-                workflows.append(wf)
+        for key, into in (
+            ("checkpoints", checkpoints), ("workflows", workflows),
+            ("samplers", samplers), ("schedulers", schedulers),
+        ):
+            for item in w.get(key) or []:
+                if item not in into:
+                    into.append(item)
     return templates.TemplateResponse(
         request,
         "darkroom.html",
@@ -88,6 +99,10 @@ async def darkroom(
             "imager": status,
             "checkpoints": checkpoints,
             "workflows": workflows or [get_settings().image_default_workflow],
+            # Fall back to the names every ComfyUI build ships, so the controls
+            # still work if the probe failed at register time.
+            "samplers": samplers or FALLBACK_SAMPLERS,
+            "schedulers": schedulers or FALLBACK_SCHEDULERS,
             "size_presets": SIZE_PRESETS,
             "max_batch": get_settings().image_max_batch,
             "error": error,
@@ -104,6 +119,8 @@ async def generate_image(
     size: str = Form("1024x1024"),
     steps: int = Form(30),
     cfg: float = Form(6.0),
+    sampler: str = Form(""),
+    scheduler: str = Form(""),
     seed: str = Form(""),
     batch: int = Form(1),
 ) -> RedirectResponse:
@@ -122,6 +139,11 @@ async def generate_image(
                 "height": height,
                 "steps": steps,
                 "cfg": cfg,
+                # Blank means "whatever the workflow template specifies" —
+                # normalize_params turns "" into None, which render_graph
+                # skips, leaving the template's own value in place.
+                "sampler": sampler or None,
+                "scheduler": scheduler or None,
                 "seed": int(seed) if seed.strip().isdigit() else None,
                 "batch": batch,
             },

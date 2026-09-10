@@ -1,0 +1,76 @@
+{
+  "description": "SDXL two-pass 'hires fix': render at base resolution, upscale the latent 1.5x, then a short low-denoise second pass. This is where most of the perceived detail in good local output comes from. Roughly 2x the time of sdxl_txt2img, and it puts the card to work — the second pass at 1536 is where the VRAM actually gets used.",
+  "map": {
+    "checkpoint": ["4", "ckpt_name"],
+    "prompt": ["6", "text"],
+    "negative_prompt": ["7", "text"],
+    "width": ["5", "width"],
+    "height": ["5", "height"],
+    "batch": ["5", "batch_size"],
+    "seed": [["3", "seed"], ["11", "seed"]],
+    "steps": ["3", "steps"],
+    "cfg": [["3", "cfg"], ["11", "cfg"]],
+    "sampler": [["3", "sampler_name"], ["11", "sampler_name"]],
+    "scheduler": [["3", "scheduler"], ["11", "scheduler"]]
+  },
+  "graph": {
+    "3": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 0,
+        "steps": 30,
+        "cfg": 6.0,
+        "sampler_name": "dpmpp_2m",
+        "scheduler": "karras",
+        "denoise": 1.0,
+        "model": ["4", 0],
+        "positive": ["6", 0],
+        "negative": ["7", 0],
+        "latent_image": ["5", 0]
+      }
+    },
+    "4": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": { "ckpt_name": "sd_xl_base_1.0.safetensors" }
+    },
+    "5": {
+      "class_type": "EmptyLatentImage",
+      "inputs": { "width": 1024, "height": 1024, "batch_size": 1 }
+    },
+    "6": {
+      "class_type": "CLIPTextEncode",
+      "inputs": { "text": "", "clip": ["4", 1] }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": { "text": "", "clip": ["4", 1] }
+    },
+    "10": {
+      "class_type": "LatentUpscaleBy",
+      "inputs": { "upscale_method": "nearest-exact", "scale_by": 1.5, "samples": ["3", 0] }
+    },
+    "11": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 0,
+        "steps": 14,
+        "cfg": 6.0,
+        "sampler_name": "dpmpp_2m",
+        "scheduler": "karras",
+        "denoise": 0.45,
+        "model": ["4", 0],
+        "positive": ["6", 0],
+        "negative": ["7", 0],
+        "latent_image": ["10", 0]
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": { "samples": ["11", 0], "vae": ["4", 2] }
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": { "filename_prefix": "drydock", "images": ["8", 0] }
+    }
+  }
+}

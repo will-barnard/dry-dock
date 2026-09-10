@@ -52,6 +52,12 @@
       <span>{{ job.params.get('width', '?') }}×{{ job.params.get('height', '?') }}</span>
       <span>{{ job.params.get('steps', '?') }} steps</span>
       <span>cfg {{ job.params.get('cfg', '?') }}</span>
+      {% if job.params.get('workflow') %}
+        <span>{{ job.params.get('workflow') }}</span>
+      {% endif %}
+      {% if job.params.get('sampler') %}
+        <span>{{ job.params.get('sampler') }}{% if job.params.get('scheduler') %}/{{ job.params.get('scheduler') }}{% endif %}</span>
+      {% endif %}
       {% if job.result and job.result.checkpoint %}
         <span title="what actually ran">{{ job.result.checkpoint }}</span>
       {% endif %}

@@ -102,6 +102,8 @@ class Worker:
         self.comfy = ComfyClient()
         self.workflows: dict[str, dict] = {}
         self.checkpoints: list[str] = []
+        self.samplers: list[str] = []
+        self.schedulers: list[str] = []
 
     # ── transport ──────────────────────────────────────────────────────────
 
@@ -142,9 +144,12 @@ class Worker:
             self.workflows = load_workflows()
             await self.wait_for_comfy()
             self.checkpoints = await self.comfy.list_checkpoints()
+            self.samplers, self.schedulers = await self.comfy.list_samplers()
             installed = list(self.checkpoints)
             metadata["checkpoints"] = self.checkpoints
             metadata["workflows"] = sorted(self.workflows)
+            metadata["samplers"] = self.samplers
+            metadata["schedulers"] = self.schedulers
             metadata["comfyui"] = self.settings.comfyui_base_url
             if not self.checkpoints:
                 log.warning(

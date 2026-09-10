@@ -15,9 +15,29 @@ To add one:
    keeps whatever the template says, which is the point — a template can carry
    its own opinionated sampler and scheduler and simply not expose them.
 
+   A parameter can drive **several** nodes by giving a list of targets instead
+   of one:
+
+   ```json
+   "seed": [["3", "seed"], ["11", "seed"]]
+   ```
+
+   That's how `sdxl_hires` keeps its two sampler passes on the same seed, cfg
+   and sampler while letting `steps` apply only to the first pass — the refine
+   pass keeps its own short step count and low denoise, which is the whole
+   point of it.
+
 Parameters the orchestrator can send: `checkpoint`, `prompt`,
 `negative_prompt`, `width`, `height`, `batch`, `seed`, `steps`, `cfg`,
 `sampler`, `scheduler`.
+
+Shipped templates:
+
+- **`sdxl_txt2img`** — single pass. Fast, and the default.
+- **`sdxl_hires`** — renders at the requested size, upscales the latent 1.5x,
+  then runs a short low-denoise second pass. Better fine detail, roughly twice
+  the time, and it's the one that actually stretches a 16GB card (the second
+  pass at 1536² is where the memory goes).
 
 No worker rebuild is needed to *try* a new graph — the orchestrator can send a
 raw graph in `ImageRequestMsg.graph`, which bypasses templates entirely. Adding

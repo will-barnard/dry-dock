@@ -22,13 +22,23 @@ services:
       WORKER_POOL: ${WORKER_POOL}                    # planner | coder | reviewer | tester | refactorer | docs | researcher | validator
       HARDWARE_CLASS: ${HARDWARE_CLASS}              # macbook | mac-mini | linux
       RAM_GB: ${RAM_GB}                              # advertised RAM
-      MAX_CONTEXT: ${MAX_CONTEXT}                    # advertised max context tokens
+      MAX_CONTEXT: ${MAX_CONTEXT}                    # advertised max context tokens (imagers leave it unset; blank falls back to the code default)
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       DEFAULT_MODEL: ${DEFAULT_MODEL:-qwen2.5-coder:32b}
       GPU_VRAM_GB: ${GPU_VRAM_GB:-0}
       GPU_MODEL: ${GPU_MODEL:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITHUB_USERNAME: ${GITHUB_USERNAME:-}
+      # Darkroom imager (WORKER_POOL=imager). Listed unconditionally because
+      # compose only forwards variables named here — a value in the .env file
+      # that isn't in this block never reaches the container. Harmless on a
+      # text worker, which ignores them.
+      COMFYUI_BASE_URL: ${COMFYUI_BASE_URL:-http://host.docker.internal:8188}
+      COMFYUI_DEFAULT_CHECKPOINT: ${COMFYUI_DEFAULT_CHECKPOINT:-}
+      COMFYUI_TIMEOUT_SECONDS: ${COMFYUI_TIMEOUT_SECONDS:-300}
+      COMFYUI_STARTUP_WAIT_SECONDS: ${COMFYUI_STARTUP_WAIT_SECONDS:-240}
+      WORKER_CAPABILITIES: ${WORKER_CAPABILITIES:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       # Per-worker host directory for ephemeral clones. Override in the .env
       # file with WORKTREE_HOST_DIR=/Volumes/FastSSD/dry-dock/<worker-name>

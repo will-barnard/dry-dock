@@ -3,12 +3,32 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_means_unset(cls, data):
+        """Treat an empty env var as absent so the field default applies.
+
+        docker-compose substitutes `${FOO}` with an empty string when FOO
+        isn't in the --env-file, and the compose template lists variables that
+        not every worker sets — an imager has no MAX_CONTEXT, for instance.
+        Without this, that empty string reaches a typed field and the container
+        crash-loops on `unable to parse string as an integer` before logging is
+        even configured, which is an opaque way to say "you left a variable
+        out". Every field whose default is "" or None is unaffected.
+        """
+        if isinstance(data, dict):
+            return {
+                k: v for k, v in data.items()
+                if not (isinstance(v, str) and v.strip() == "")
+            }
+        return data
 
     orchestrator_url: str = Field(alias="ORCHESTRATOR_URL")
     worker_shared_secret: str = Field(alias="WORKER_SHARED_SECRET")
@@ -60,6 +80,15 @@ class Settings(BaseSettings):
     comfyui_default_checkpoint: str = Field(default="", alias="COMFYUI_DEFAULT_CHECKPOINT")
     # Ceiling for one render, including a cold checkpoint load.
     comfyui_timeout_seconds: float = Field(default=300.0, alias="COMFYUI_TIMEOUT_SECONDS")
+    # How long to wait for ComfyUI to answer before registering. This exists
+    # because of boot ordering: the container has restart:unless-stopped, so on
+    # a machine that reboots it comes back the moment Docker does — typically
+    # well before ComfyUI has finished importing torch. Registering in that
+    # window advertises an empty checkpoint list, and the Darkroom dropdown
+    # stays empty until someone restarts the worker by hand.
+    comfyui_startup_wait_seconds: float = Field(
+        default=240.0, alias="COMFYUI_STARTUP_WAIT_SECONDS"
+    )
     # Override the advertised capability list (comma-separated). Normally left
     # blank — it's derived from WORKER_POOL.
     worker_capabilities: str = Field(default="", alias="WORKER_CAPABILITIES")

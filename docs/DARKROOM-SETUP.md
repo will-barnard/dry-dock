@@ -37,10 +37,47 @@ not that anything here is misconfigured — take a current release.
 Check it from a browser on the Windows box: `http://localhost:8188` should load
 the ComfyUI canvas, and `http://localhost:8188/system_stats` should return JSON.
 
-Make `run_drydock.bat` start on boot (Task Scheduler "at log on", or a
-shortcut in `shell:startup`) — otherwise every wake gets
-you a booted machine with no ComfyUI, which fails as
-`IMAGE_WAKE_TIMEOUT_SECONDS` expiring rather than as anything obvious.
+### Making it survive a reboot
+
+**Docker Desktop is the binding constraint here, not ComfyUI.** Both the
+Startup folder and Task Scheduler's "at log on" trigger require an interactive
+logon session, and so does Docker Desktop — which the imager container needs
+regardless. So don't engineer ComfyUI's autostart separately; match it to
+whatever already brings Docker back.
+
+This machine already auto-logs in and starts Docker Desktop on boot (Will,
+Sept 2026), so the session exists and ComfyUI only has to join it. The
+**Startup folder** is the simplest way and needs no Task Scheduler:
+
+1. `Win`+`R` → `shell:startup` → Enter.
+2. **Right**-drag `run_drydock.bat` into that folder → *Create shortcuts here*.
+   Right-drag, not left: a left-drag moves the bat out of the ComfyUI folder
+   and breaks it.
+3. Optional: shortcut → Properties → *Run: Minimized*.
+
+The shortcut is what makes this work — Windows sets its "Start in" to the bat's
+own folder, and every path in the bat is relative to that. A bare copy of the
+bat elsewhere, or a scheduled task with that field left blank, runs from
+`system32` and fails immediately.
+
+Task Scheduler is only worth it for auto-restart-on-crash, which the Startup
+folder can't do. If you go that way: trigger *At log on*; action the bat; set
+**Start in** to the `ComfyUI_windows_portable` folder; **untick** "Stop the
+task if it runs longer than 3 days" (on by default, would kill ComfyUI every
+third day); set "If the task fails, restart every 1 minute".
+
+A true no-login setup (Task Scheduler "run whether user is logged on or not",
+or NSSM as a service) is possible, but it buys nothing while Docker Desktop
+still needs a session — and GPU access from session 0 is one more thing to
+verify. If auto sign-in is ever switched off, nothing on that box recovers
+unattended, Docker and the existing workers included.
+
+The worker tolerates the race either way: it now waits up to
+`COMFYUI_STARTUP_WAIT_SECONDS` (240 by default) for ComfyUI to answer before
+registering, so a container that restarts with Docker doesn't advertise an
+empty checkpoint list. If ComfyUI never comes up it registers anyway — a
+visible imager with a legible error beats a machine that looks absent — and
+re-probes on the next render, so it recovers without a restart.
 
 ## 2. The imager worker
 

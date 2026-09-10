@@ -140,6 +140,7 @@ class Worker:
             # "installed models" are ComfyUI checkpoints, advertised so the
             # Darkroom UI can only ever offer what this machine really has.
             self.workflows = load_workflows()
+            await self.wait_for_comfy()
             self.checkpoints = await self.comfy.list_checkpoints()
             installed = list(self.checkpoints)
             metadata["checkpoints"] = self.checkpoints
@@ -453,6 +454,50 @@ class Worker:
 
     # ── Darkroom ───────────────────────────────────────────────────
 
+    async def wait_for_comfy(self) -> None:
+        """Block until ComfyUI answers, or the startup budget runs out.
+
+        Boot ordering, not paranoia: this container restarts with Docker, and
+        on a machine that reboots daily that happens minutes before ComfyUI has
+        finished starting. Registering during that window advertises zero
+        checkpoints, which leaves the Darkroom dropdown empty until someone
+        notices. Waiting costs nothing on a machine where ComfyUI is already
+        up - the first probe succeeds.
+
+        If the budget expires we register anyway rather than exiting: a visible
+        imager reporting a legible error beats a machine that looks absent.
+        """
+        deadline = time.monotonic() + self.settings.comfyui_startup_wait_seconds
+        announced = False
+        while time.monotonic() < deadline:
+            if await self.comfy.health() is not None:
+                if announced:
+                    log.info("comfy.ready", url=self.settings.comfyui_base_url)
+                return
+            if not announced:
+                log.info(
+                    "comfy.waiting",
+                    url=self.settings.comfyui_base_url,
+                    budget_s=self.settings.comfyui_startup_wait_seconds,
+                )
+                announced = True
+            await asyncio.sleep(5.0)
+        log.warning(
+            "comfy.startup_wait_expired",
+            url=self.settings.comfyui_base_url,
+            hint="registering without checkpoints; ComfyUI may not be running",
+        )
+
+    async def refresh_checkpoints(self) -> None:
+        """Re-probe ComfyUI for checkpoints. Called before a render when the
+        list is empty, so a worker that registered ahead of ComfyUI recovers on
+        its own instead of needing a restart."""
+        found = await self.comfy.list_checkpoints()
+        if found:
+            self.checkpoints = found
+            log.info("comfy.checkpoints_refreshed", count=len(found))
+
+
     def _resolve_checkpoint(self, requested: str | None, template: dict) -> str | None:
         """Pick the checkpoint to actually load.
 
@@ -488,6 +533,9 @@ class Worker:
         started = time.monotonic()
         log.info("worker.image_started", job=str(req.job_id), workflow=req.workflow,
                  batch=req.batch, steps=req.steps)
+        # Self-heal the boot-order case: we registered before ComfyUI was up.
+        if not self.checkpoints:
+            await self.refresh_checkpoints()
         try:
             if req.graph:
                 # Raw-graph escape hatch: lets a new workflow be trialled from

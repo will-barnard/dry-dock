@@ -46,6 +46,61 @@ Stored in `app_settings` under `pilot.<mode>.{pool,model,tools}`, read through
 Blank is the safest model setting: a worker can never 404 on its own
 configured default.
 
+### Where the model list comes from
+
+The dropdown is the **union of `installed_models` across the pool's online
+workers**. That value originates on the machine itself: the worker calls
+Ollama's `/api/tags` (what `ollama list` shows) during `register()` and ships
+the result in `RegisterMsg`.
+
+Two consequences:
+
+- **It's a snapshot, not a live query.** Nothing refreshes `installed_models`
+  except a re-register, so a freshly pulled model doesn't appear until that
+  worker reconnects (`./workers.sh restart`), and a deleted one lingers until
+  the same. A worker whose Ollama was unreachable at startup registers with an
+  **empty** list — it then fails every pinned model, and the settings page
+  calls that out by name.
+- **Union ≠ every worker.** In a pool spanning two machines — `reviewer`,
+  `tester` and `validator` all do — the list can offer a tag only one of them
+  has. So a pinned model is treated as a hard requirement at dispatch:
+  `dispatch_turn` filters the pool to workers that actually have it, and says
+  so plainly if none do. Partial coverage is legal but costs capacity, and the
+  settings page says "installed on 1 of 3 online workers" rather than a
+  reassuring green tick.
+
+### Making the choice obvious
+
+A flat list of Ollama tags asks the user to know things the app already knows —
+that `llama3` and `llama3.1` are different models with different tool support,
+that a 70B answer is minutes rather than seconds, that a tag the pool offers may
+live on only one of its machines. So `rank_models` annotates, groups and orders
+them per mode, and the template renders that as `<optgroup>`s:
+
+| Group | Meaning |
+|---|---|
+| **Best for \<mode\>** | on every online worker, and able to do what the mode needs |
+| **Works, but can't use tools** | Thoughtful only — it would silently degrade to search |
+| **Not installed on every worker** | usable, but it costs pool capacity |
+
+Each option carries its own facts: `qwen2.5-coder:32b — 32B · tools · code-tuned`.
+Size is parsed from the tag; `:latest` reads as "size unknown" rather than being
+guessed, and sorts last within its group.
+
+The ★ suggestion is the top of the first group, with one-click apply:
+
+- **Thoughtful** — the largest tool-capable model every worker has. Size wins over
+  general-vs-code here, since a large code-tuned model still reasons better than a
+  small general one.
+- **Lightweight** — the fastest *general-purpose* model every worker has. Code
+  models are demoted below any general alternative for both modes: Pilot is a
+  chat surface, and "smallest" on its own would happily recommend a 6.7B
+  fill-in-the-middle code model as a conversationalist.
+
+Pools are labelled by the hardware behind them (`coder — macbook · 64 GB · 1
+online`) for the same reason — a pool name is an implementation detail; the
+machine is the actual choice.
+
 ### This is NOT the fleet Settings page
 
 `/settings` role→model pins are a **hard filter applied by the task router**

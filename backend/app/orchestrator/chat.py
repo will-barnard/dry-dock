@@ -243,6 +243,36 @@ async def dispatch_turn(
     if not workers:
         return await _no_worker_error(config)
 
+    # A pinned model is a hard requirement, not a preference. The settings
+    # page offers the UNION of installed models across the pool, so in a pool
+    # spanning two machines (reviewer, tester, validator all do) it can offer
+    # a tag only one of them has — and handing the turn to the other one is
+    # the 404 this whole rewrite exists to stop. Mirrors what router.py
+    # already does for task dispatch.
+    #
+    # A worker whose Ollama was unreachable at register time advertises an
+    # EMPTY model list and so is filtered out here. That is correct: it would
+    # 404 on anything. It also means "nobody has it" can really mean "that
+    # worker registered blind" — hence the hint in the message.
+    if config.model:
+        capable = [w for w in workers if config.model in (w.installed_models or ())]
+        if not capable:
+            blind = [w for w in workers if not w.installed_models]
+            hint = ""
+            if blind:
+                hint = (
+                    f" ({', '.join(w.name for w in blind)} registered without a "
+                    f"model list — its Ollama was unreachable at startup, so "
+                    f"restart it.)"
+                )
+            return (
+                f"No online worker in the '{config.pool}' pool has "
+                f"'{config.model}' installed. Choose another model for "
+                f"{config.label} in Pilot settings, or pull it on that "
+                f"machine.{hint}"
+            )
+        workers = capable
+
     # Prefer a fully idle worker; fall back to any so a busy fleet still
     # answers (Ollama will just serialize the inference).
     idle = [w for w in workers if w.current_task_id is None]

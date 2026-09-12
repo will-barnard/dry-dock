@@ -47,17 +47,32 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 @router.get("/pilot/pools/{pool}/models", response_model=None)
 async def pool_models(
     pool: str,
+    mode: str = pilot.DEFAULT_MODE,
     user: User = Depends(get_current_user),
 ) -> JSONResponse:
-    """Union of installed_models across all live workers in a pool.
+    """The pool's models, annotated and ordered for a mode.
 
-    Only the settings page needs this now — the chat UI never names a model.
+    Only the settings page needs this — the chat UI never names a model. It
+    takes `mode` because "appropriate" differs: Thoughtful wants the biggest
+    tool-capable model, Lightweight the fastest one.
     """
     if pool not in KNOWN_POOLS:
         raise HTTPException(400, f"unknown pool: {pool}")
     workers = await registry.by_pool(pool)
-    models: list[str] = sorted({m for w in workers for m in w.installed_models})
-    return JSONResponse({"models": models})
+    installed = {m for w in workers for m in (w.installed_models or ())}
+    coverage = {
+        tag: sum(1 for w in workers if tag in (w.installed_models or ()))
+        for tag in installed
+    }
+    options, recommended = pilot.rank_models(
+        pilot.normalize_mode(mode), sorted(installed), coverage, len(workers)
+    )
+    return JSONResponse({
+        "models": sorted(installed),
+        "options": options,
+        "recommended": recommended,
+        "worker_count": len(workers),
+    })
 
 
 @router.get("/pilot", response_class=HTMLResponse, response_model=None)
@@ -298,7 +313,7 @@ async def pilot_settings_page(
         {
             "user": user,
             "modes": await pilot.all_mode_statuses(),
-            "pools": list(KNOWN_POOLS),
+            "pools": await pilot.pool_options(),
         },
     )
 

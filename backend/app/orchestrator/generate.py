@@ -1,6 +1,6 @@
 """Synchronous one-shot generation for external API callers.
 
-This is the request/response cousin of Operator chat. Where chat streams
+This is the request/response cousin of Pilot chat. Where chat streams
 deltas back to a browser over SSE, `generate` is a blocking call: an external
 app (e.g. seedbook) POSTs a prompt, we dispatch a single non-streaming
 inference to a live worker, wait for the worker's reply, and hand the finished

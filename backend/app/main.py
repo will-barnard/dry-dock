@@ -23,7 +23,7 @@ from app.routes import (
     darkroom as darkroom_routes,
     generate as generate_routes,
     image as image_routes,
-    operator as operator_routes,
+    pilot as pilot_routes,
     projects,
     remote_machines as remote_machines_routes,
     scout as scout_routes,
@@ -68,6 +68,17 @@ _INLINE_MIGRATIONS: tuple[str, ...] = (
     "ALTER TABLE site_learning_jobs ADD COLUMN IF NOT EXISTS url_pattern VARCHAR(255)",
     "ALTER TABLE site_learning_jobs ADD COLUMN IF NOT EXISTS page_type VARCHAR(32) NOT NULL DEFAULT 'listing'",
     "ALTER TABLE site_learning_jobs ADD COLUMN IF NOT EXISTS result_shape VARCHAR(16) NOT NULL DEFAULT 'single'",
+    # Pilot (was Operator): two-mode late binding. `mode` is the only routing
+    # decision stored on a conversation; pool/model are resolved from
+    # app_settings per turn. Existing rows land on "deep" — the mode that
+    # keeps tools — regardless of the pool they were originally pinned to.
+    "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS mode VARCHAR(16) NOT NULL DEFAULT 'deep'",
+    # web_mode collapses from a 3-way mechanism to a 2-way intent. The
+    # mechanism is now derived per turn from the conversation's mode.
+    "UPDATE conversations SET web_mode = 'on' WHERE web_mode IN ('search', 'tools')",
+    # Which model actually answered a turn, for diagnosis now that the
+    # composer no longer shows one.
+    "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS model_used VARCHAR(128)",
     # Temp accounts (12-hour token login)
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_temp BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS temp_token VARCHAR(64)",
@@ -225,7 +236,7 @@ app.include_router(remote_machines_routes.api_router, dependencies=_auth)
 app.include_router(dashboard.router, dependencies=_auth)
 app.include_router(settings_routes.router, dependencies=_auth)
 app.include_router(remote_machines_routes.router, dependencies=_auth)
-app.include_router(operator_routes.router, dependencies=_auth)
+app.include_router(pilot_routes.router, dependencies=_auth)
 app.include_router(workbench_routes.router, dependencies=_auth)
 app.include_router(scout_routes.router, dependencies=_auth)
 app.include_router(darkroom_routes.router, dependencies=_auth)

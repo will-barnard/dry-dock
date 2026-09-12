@@ -20,8 +20,12 @@ line silently does nothing — write your own launcher next to it instead.
 Create `run_drydock.bat` in the `ComfyUI_windows_portable` folder:
 
 ```bat
-.\python_embeded\python.exe -s ComfyUI\main.py --windows-standalone-build --listen 0.0.0.0
+.\python_embeded\python.exe -s ComfyUI\main.py --windows-standalone-build --listen 0.0.0.0 --disable-auto-launch
 ```
+
+`--disable-auto-launch` stops ComfyUI opening a browser tab on every start —
+`--windows-standalone-build` turns that on, and it's pure noise when the UI you
+actually use is Darkroom.
 
 **`--listen 0.0.0.0` is not optional.** ComfyUI binds `127.0.0.1` by default,
 and a worker container reaching `host.docker.internal:8188` is not localhost as
@@ -49,16 +53,62 @@ This machine already auto-logs in and starts Docker Desktop on boot (Will,
 Sept 2026), so the session exists and ComfyUI only has to join it. The
 **Startup folder** is the simplest way and needs no Task Scheduler:
 
-1. `Win`+`R` → `shell:startup` → Enter.
-2. **Right**-drag `run_drydock.bat` into that folder → *Create shortcuts here*.
-   Right-drag, not left: a left-drag moves the bat out of the ComfyUI folder
-   and breaks it.
-3. Optional: shortcut → Properties → *Run: Minimized*.
+Two small files do it. Write them from PowerShell rather than Notepad — it
+avoids the "saved as .txt" trap and the Properties dialog entirely:
 
-The shortcut is what makes this work — Windows sets its "Start in" to the bat's
-own folder, and every path in the bat is relative to that. A bare copy of the
-bat elsewhere, or a scheduled task with that field left blank, runs from
-`system32` and fails immediately.
+```powershell
+$comfy = "<COMFY>"                       # your ComfyUI folder
+$startup = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+
+# 1. launcher batch - runs ComfyUI, all output to comfyui.log
+@"
+@echo off
+cd /d "%~dp0"
+.\python_embeded\python.exe -s ComfyUI\main.py --windows-standalone-build --listen 0.0.0.0 --disable-auto-launch > comfyui.log 2>&1
+"@ | Set-Content "$comfy\run_drydock.bat" -Encoding ASCII
+
+# 2. one-line hidden launcher, written straight into Startup
+"CreateObject(""WScript.Shell"").Run ""$comfy\run_drydock.bat"", 0, False" |
+  Set-Content "$startup\comfyui-hidden.vbs" -Encoding ASCII
+```
+
+The `0` is the window style: fully hidden, not minimized. The batch redirects
+to `comfyui.log`, which is both how you debug it later and — see below — what
+makes it run at all.
+
+**Do not try to do this with `pythonw.exe`.** It looks like the obvious answer
+(it's the windowless build of the same interpreter, sitting right there in
+`python_embeded`) and it fails, silently. With no console attached, Python sets
+`sys.stdout` and `sys.stderr` to `None`; ComfyUI prints a banner on startup,
+that `print()` raises `AttributeError: 'NoneType' object has no attribute
+'write'`, and the traceback goes nowhere because stderr is also `None`. The
+process dies in under a second with no window, no log and no exit message.
+Redirecting output to a file fixes it because the handles then exist — which is
+exactly what the batch above does. Hide the *launch*, not the interpreter.
+
+Verify without rebooting:
+
+```powershell
+& "$startup\comfyui-hidden.vbs"
+Start-Sleep 45
+Get-Process python
+Invoke-RestMethod http://localhost:8188/system_stats
+```
+
+A process plus JSON means it's up. Note that ComfyUI spends 20-60s importing
+torch before it listens, so checking too early is its own false failure — worth
+remembering for the reboot test, where the machine can be up a full minute
+before Darkroom can reach it.
+
+One caveat: Microsoft has deprecated VBScript, so it will become an optional
+feature in some future Windows release. It works on 10 and 11 today. The
+boring alternative is a shortcut to `run_drydock.bat` set to *Run: Minimized* —
+a taskbar button, but no window on screen and the same log file.
+
+There's no tray icon on offer — ComfyUI has no tray mode, and the practical
+equivalent is what's above: no window at all. (If a real tray icon matters,
+third-party utilities like RBTray can send an existing window there, but that
+means keeping the visible console you were trying to get rid of.)
 
 Task Scheduler is only worth it for auto-restart-on-crash, which the Startup
 folder can't do. If you go that way: trigger *At log on*; action the bat; set
@@ -84,6 +134,12 @@ re-probes on the next render, so it recovers without a restart.
 Copy `worker/envs/windows-imager-1.env.example` to
 `worker/envs/windows-imager-1.env` **on the Windows box**, then fill in
 `WORKER_SHARED_SECRET` — copy it from any existing env file in that directory.
+
+(That template sets `MAX_CONTEXT` even though an imager has no use for it.
+The shared compose file lists the variable without a default, so an env file
+missing it makes docker compose print a "variable is not set" warning on every
+command — harmless, since the worker treats a blank env var as unset, but
+noisy. Setting it is purely to keep the output clean.)
 
 Then start it the usual way:
 

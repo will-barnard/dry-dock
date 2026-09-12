@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}Pilot settings — dry-dock{% endblock %}
+{% block content %}
+<nav class="text-sm text-slate-500 mb-4">
+  <a href="/" class="hover:underline">Modules</a> /
+  <a href="/pilot" class="hover:underline">Pilot</a> / Settings
+</nav>
+
+<header class="mb-6">
+  <h1 class="text-2xl font-semibold">Pilot modes</h1>
+  <p class="text-sm text-slate-600 mt-1">
+    Pilot offers two choices; this is where they point. Changes apply to the
+    next message in <em>every</em> thread, including old ones — a conversation
+    stores only its mode, never a pool or a model tag.
+  </p>
+</header>
+
+<form method="post" action="/pilot/settings" class="space-y-5">
+  {% for m in modes %}
+    <section class="bg-white border border-slate-200 rounded p-4" data-mode="{{ m.mode }}">
+      <div class="flex items-baseline justify-between">
+        <h2 class="text-lg font-semibold flex items-center gap-2">
+          {{ m.label }}
+          {% if m.online %}
+            <span class="text-[10px] bg-emerald-100 text-emerald-700 rounded px-1.5 py-0.5">
+              {{ m.worker_count }} online
+            </span>
+          {% else %}
+            <span class="text-[10px] bg-rose-100 text-rose-700 rounded px-1.5 py-0.5">no workers online</span>
+          {% endif %}
+        </h2>
+        <span class="text-xs text-slate-400 font-mono">{{ m.mode }}</span>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+        <label class="text-sm block">
+          Pool
+          <select name="pool.{{ m.mode }}" data-pool-for="{{ m.mode }}"
+                  class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm font-mono">
+            {% for p in pools %}
+              <option value="{{ p }}" {% if p == m.pool %}selected{% endif %}>{{ p }}</option>
+            {% endfor %}
+          </select>
+          <span class="text-xs text-slate-500 mt-1 block">Which machine answers — pools map one-to-one to hardware.</span>
+        </label>
+
+        <label class="text-sm block">
+          Model
+          <select name="model.{{ m.mode }}" data-model-for="{{ m.mode }}"
+                  class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm font-mono">
+            <option value="">— each worker's own default —</option>
+            {% for mod in m.available_models %}
+              <option value="{{ mod }}" {% if mod == m.model %}selected{% endif %}>{{ mod }}</option>
+            {% endfor %}
+            {% if m.model and m.model not in m.available_models %}
+              <option value="{{ m.model }}" selected>{{ m.model }} (not installed)</option>
+            {% endif %}
+          </select>
+          <span class="text-xs text-slate-500 mt-1 block" data-model-hint-for="{{ m.mode }}">
+            Blank is safest — a worker can never 404 on its own default.
+          </span>
+        </label>
+      </div>
+
+      {% if m.mode == 'deep' %}
+        <label class="flex items-start gap-2 mt-4 text-sm">
+          <input type="checkbox" name="tools.{{ m.mode }}" value="1" class="mt-1"
+                 {% if m.tools %}checked{% endif %}>
+          <span>
+            Allow tools (web search, page fetch, image generation)
+            <span class="text-xs text-slate-500 block mt-0.5">
+              Only this mode can have them. Ollama silently ignores tools on a model
+              that can't call them, so a thread would look researched while answering
+              from memory — if the model below isn't tool-capable, Pilot falls back to
+              plain search results instead.
+            </span>
+          </span>
+        </label>
+      {% else %}
+        <p class="text-xs text-slate-500 mt-4">
+          Tools are reserved for Thoughtful. Web access in this mode is search
+          results injected before the answer, which works on any model.
+        </p>
+      {% endif %}
+
+      <div class="mt-4 border-t border-slate-100 pt-3 text-xs space-y-1">
+        {% if m.online %}
+          <div class="text-slate-500">
+            Workers: <span class="font-mono">{{ m.worker_names | join(', ') }}</span>
+          </div>
+        {% else %}
+          <div class="text-rose-600">
+            Nothing is holding a connection in <span class="font-mono">{{ m.pool }}</span>.
+            Messages in this mode will fail until a worker registers.
+          </div>
+        {% endif %}
+
+        {% if m.model_installed is none %}
+          <div class="text-slate-500">No model pinned — each worker uses its own <span class="font-mono">DEFAULT_MODEL</span>.</div>
+        {% elif m.model_installed %}
+          <div class="text-emerald-700">
+            <span class="font-mono">{{ m.model }}</span> is installed on at least one online worker.
+          </div>
+        {% else %}
+          <div class="text-rose-600">
+            <span class="font-mono">{{ m.model }}</span> is <strong>not installed</strong> on any online
+            worker in this pool. Every message will fail with a 404 until you pull it
+            there or choose another model.
+          </div>
+        {% endif %}
+
+        {% if m.tools %}
+          {% if m.tool_capable is none %}
+            <div class="text-slate-500">
+              Tool support can't be verified without a pinned model — check that the
+              worker's default is a Qwen 2.5/3 or Llama 3.1+ family model.
+            </div>
+          {% elif m.tool_capable %}
+            <div class="text-emerald-700"><span class="font-mono">{{ m.model }}</span> supports tool calling.</div>
+          {% else %}
+            <div class="text-amber-700">
+              <span class="font-mono">{{ m.model }}</span> isn't a known tool-calling model, so web
+              access degrades to plain search results. Pick a Qwen 2.5/3 or Llama 3.1+ model
+              to get the full loop.
+            </div>
+          {% endif %}
+        {% endif %}
+      </div>
+    </section>
+  {% endfor %}
+
+  <div class="flex items-center gap-4">
+    <button class="bg-slate-900 text-white text-sm font-medium px-4 py-2 rounded">Save modes</button>
+    <a href="/pilot" class="text-sm text-slate-500 hover:underline">Back to Pilot</a>
+  </div>
+</form>
+
+<p class="text-xs text-slate-500 mt-6 border-t border-slate-200 pt-4">
+  Not to be confused with the <a href="/settings" class="underline">fleet Settings page</a>.
+  The role→model pins there are a hard filter applied by the <em>task router</em> — a worker
+  without that exact tag is dropped from Engineer dispatch entirely. Pilot chat never goes
+  through the router, so nothing on this page filters workers; it only chooses which one is asked.
+</p>
+
+<script>
+  // Repopulate the model list when a pool changes, so you can't pick a model
+  // the new pool has never heard of. Tool-capability prefixes mirror
+  // orchestrator/pilot.py — kept in sync by hand, and only advisory here.
+  const TOOL_PREFIXES = ["qwen2.5", "qwen3", "llama3.1", "llama3.2", "llama3.3",
+                         "mistral-nemo", "mistral-small", "mistral-large",
+                         "devstral", "command-r", "hermes3", "granite3", "firefunction"];
+
+  document.querySelectorAll("[data-pool-for]").forEach(function (poolSel) {
+    const mode = poolSel.dataset.poolFor;
+    const modelSel = document.querySelector('[data-model-for="' + mode + '"]');
+    const hint = document.querySelector('[data-model-hint-for="' + mode + '"]');
+
+    poolSel.addEventListener("change", async function () {
+      hint.textContent = "loading models…";
+      const previous = modelSel.value;
+      try {
+        const res = await fetch("/pilot/pools/" + encodeURIComponent(this.value) + "/models");
+        const data = await res.json();
+        modelSel.innerHTML = '<option value="">— each worker’s own default —</option>';
+        data.models.forEach(function (m) {
+          const opt = document.createElement("option");
+          opt.value = m;
+          opt.textContent = m;
+          if (m === previous) opt.selected = true;
+          modelSel.appendChild(opt);
+        });
+        hint.textContent = data.models.length
+          ? data.models.length + " model(s) on online workers in this pool."
+          : "No workers online in this pool — leave the model blank.";
+      } catch (e) {
+        hint.textContent = "Couldn't load models for this pool.";
+      }
+    });
+
+    modelSel.addEventListener("change", function () {
+      const v = (this.value || "").toLowerCase();
+      if (!v) {
+        hint.textContent = "Blank is safest — a worker can never 404 on its own default.";
+      } else if (TOOL_PREFIXES.some(function (p) { return v.startsWith(p); })) {
+        hint.textContent = "Tool-capable family. Save to apply.";
+      } else {
+        hint.textContent = "Not a known tool-calling family — web access would degrade to search results.";
+      }
+    });
+  });
+</script>
+{% endblock %}

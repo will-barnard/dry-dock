@@ -1,7 +1,7 @@
-"""Web search backend for the Operator module.
+"""Web search backend for the Pilot module.
 
 Phase 1 architecture: the orchestrator (not the worker) runs the search
-before each Operator turn that has `Conversation.web_search_enabled` set.
+before each Pilot turn with web access on.
 The top results are folded into the prompt as a synthetic system message
 so the model can ground its answer in current information, and persisted
 as a TOOL-role ConversationMessage for the transcript UI.

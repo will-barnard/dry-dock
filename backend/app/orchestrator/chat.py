@@ -1,10 +1,12 @@
-"""Operator chat dispatch + streaming accumulator.
+"""Pilot chat dispatch + streaming accumulator.
 
 Chat is deliberately NOT routed through the Task system. A conversation turn:
 
   1. The route persists the user message + an empty assistant message.
-  2. `dispatch_turn` picks a live worker in the conversation's pool and sends
-     a `chat_request` over its WebSocket.
+  2. `dispatch_turn` resolves the conversation's MODE to a (pool, model) pair
+     via orchestrator/pilot.py, picks a live worker in that pool, and sends a
+     `chat_request` over its WebSocket. The resolution happens here, per turn,
+     and never at conversation-creation time — see pilot.py for why.
   3. The worker streams `chat_chunk` deltas; `on_chunk` accumulates them in
      memory and republishes the *running full text* on the conversation's
      EventBus topic (so the SSE handler can just replace a div).
@@ -26,6 +28,7 @@ import structlog
 from app.db import SessionLocal
 from app.models import Conversation, ConversationMessage, MessageRole
 from app.orchestrator.event_bus import bus
+from app.orchestrator import pilot
 from app.orchestrator.protocol import ChatRequestMsg
 from app.orchestrator.registry import registry
 from app.orchestrator import web_search
@@ -36,6 +39,13 @@ log = structlog.get_logger()
 # Running text per in-flight assistant message. Keyed by assistant_message_id.
 # Populated by on_chunk, drained by on_done / on_error.
 _accumulators: dict[uuid.UUID, str] = {}
+
+# What each in-flight turn actually resolved to: {"worker", "model", "label"}.
+# Kept because Pilot hides the model from the UI, so when a turn fails the
+# error text is the only place the user can learn which model was asked for.
+# Keyed by assistant_message_id; drained by on_done / on_error alongside the
+# accumulator.
+_turn_context: dict[uuid.UUID, dict] = {}
 
 # How many recent messages to feed the model. Keeps context bounded without a
 # summarization pass (that's a v2 refinement).
@@ -181,25 +191,67 @@ async def handle_tool_call(
     return {"success": True, "content": text}
 
 
+def web_enabled(conversation: Conversation) -> bool:
+    """Read the conversation's web INTENT, tolerating pre-Pilot values.
+
+    The boot migration rewrites "search"/"tools" to "on", but a row written by
+    an older process mid-deploy would still carry them.
+    """
+    raw = (getattr(conversation, "web_mode", None) or "").strip().lower()
+    if raw in ("on", "search", "tools"):
+        return True
+    if raw == "off":
+        return False
+    return bool(conversation.web_search_enabled)
+
+
+async def _no_worker_error(config: pilot.ModeConfig) -> str:
+    """Explain an empty pool in mode language, and point at the way out.
+
+    The user picked "Thoughtful", not a pool, so naming only the pool would be
+    a non-sequitur. Check the other mode too — most of the time one machine is
+    simply asleep and switching modes is the fastest fix.
+    """
+    msg = f"No worker is online for {config.label} mode (pool '{config.pool}')."
+    other = pilot.DEEP if config.mode == pilot.LIGHT else pilot.LIGHT
+    other_config = await pilot.get_mode_config(other)
+    if other_config.pool != config.pool and await registry.by_pool(other_config.pool):
+        return (
+            f"{msg} {other_config.label} mode has a worker online — switch this "
+            f"thread to it above, or repoint the mode in Pilot settings."
+        )
+    return (
+        f"{msg} Start a worker in that pool, or point the mode at a different "
+        f"one in Pilot settings."
+    )
+
+
 async def dispatch_turn(
     conversation: Conversation,
     assistant_message_id: uuid.UUID,
     history: list[dict[str, str]],
 ) -> str | None:
     """Send a chat turn to a worker. Returns None on success, or an error
-    string the caller should record on the assistant message."""
-    workers = await registry.by_pool(conversation.pool)
+    string the caller should record on the assistant message.
+
+    The conversation's mode is resolved to a concrete (pool, model) here, on
+    every turn. Changing a mode's settings therefore takes effect on existing
+    threads — including threads whose last turn failed.
+    """
+    config = await pilot.get_mode_config(conversation.mode)
+    workers = await registry.by_pool(config.pool)
     if not workers:
-        return f"No worker is online in the '{conversation.pool}' pool."
+        return await _no_worker_error(config)
 
     # Prefer a fully idle worker; fall back to any so a busy fleet still
     # answers (Ollama will just serialize the inference).
     idle = [w for w in workers if w.current_task_id is None]
     worker = (idle or workers)[0]
 
-    web_mode = getattr(conversation, "web_mode", None) or (
-        "search" if conversation.web_search_enabled else "off"
-    )
+    # Mechanism is derived, never stored: the conversation holds only on/off.
+    # A tools-enabled mode whose model can't call tools degrades to "search"
+    # rather than sending a `tools` field Ollama will silently drop.
+    web_mode = pilot.web_mechanism(config, web_enabled(conversation))
 
     # ── "search" mode (Phase 1: pre-flight injection) ───────────────
     # Run a search against the latest user message and prepend a synthetic
@@ -254,7 +306,9 @@ async def dispatch_turn(
     msg = ChatRequestMsg(
         conversation_id=conversation.id,
         assistant_message_id=assistant_message_id,
-        model=conversation.model,
+        # None means "use that worker's own DEFAULT_MODEL", which is the one
+        # model a worker can never 404 on.
+        model=config.model,
         messages=trimmed,
         tools=tools,
     )
@@ -265,13 +319,28 @@ async def dispatch_turn(
         return f"Failed to reach worker {worker.name}: {exc}"
 
     _accumulators[assistant_message_id] = ""
-    # Record which worker is handling this turn so the UI can show it.
+    _turn_context[assistant_message_id] = {
+        "worker": worker.name,
+        "model": config.model,
+        "label": config.label,
+    }
+    # Record which worker and model are handling this turn so the UI can show
+    # it and a failure is diagnosable.
     async with SessionLocal() as session:
         async with session.begin():
             am = await session.get(ConversationMessage, assistant_message_id)
             if am:
                 am.worker_name = worker.name
-    log.info("chat.dispatched", conversation=str(conversation.id), worker=worker.name)
+                am.model_used = config.model
+    log.info(
+        "chat.dispatched",
+        conversation=str(conversation.id),
+        mode=config.mode,
+        pool=config.pool,
+        worker=worker.name,
+        model=config.model,
+        web=web_mode,
+    )
     return None
 
 
@@ -296,6 +365,7 @@ async def on_done(
 ) -> None:
     """Persist the final assistant content and signal the SSE stream."""
     _accumulators.pop(assistant_message_id, None)
+    _turn_context.pop(assistant_message_id, None)
     async with SessionLocal() as session:
         async with session.begin():
             am = await session.get(ConversationMessage, assistant_message_id)
@@ -319,6 +389,38 @@ async def on_done(
     log.info("chat.turn_done", conversation=str(conversation_id))
 
 
+def _humanize_error(error: str, context: dict) -> str:
+    """Translate a raw worker/httpx error into something actionable.
+
+    Worth the trouble because Pilot hides the model name: an unadorned
+    "Client error '404 Not Found' for url http://host.docker.internal:11434
+    /api/chat" tells the user nothing they can act on, and 404 from Ollama's
+    chat endpoint means one specific thing — the requested model tag isn't
+    pulled on that machine.
+    """
+    worker = context.get("worker") or "the worker that answered"
+    model = context.get("model")
+    lowered = error.lower()
+
+    if "404" in error and "/api/chat" in lowered:
+        named = f"'{model}'" if model else "That worker's default model"
+        return (
+            f"{named} isn't installed on {worker} — its Ollama returned 404. "
+            f"Pick a model that worker actually has in Pilot settings, or "
+            f"pull it on that machine."
+        )
+    if any(x in lowered for x in (
+        "connection refused", "all connection attempts failed", "connecterror",
+    )):
+        return (
+            f"{worker} couldn't reach its Ollama host. Check that Ollama is "
+            f"running on that machine."
+        )
+    if "timeout" in lowered or "timed out" in lowered:
+        return f"{worker} didn't finish in time. Try a shorter prompt."
+    return error
+
+
 async def on_error(
     conversation_id: uuid.UUID,
     assistant_message_id: uuid.UUID,
@@ -326,6 +428,8 @@ async def on_error(
 ) -> None:
     """Record a failed turn on the assistant message and signal the stream."""
     partial = _accumulators.pop(assistant_message_id, "")
+    context = _turn_context.pop(assistant_message_id, {})
+    error = _humanize_error(error, context)
     async with SessionLocal() as session:
         async with session.begin():
             am = await session.get(ConversationMessage, assistant_message_id)

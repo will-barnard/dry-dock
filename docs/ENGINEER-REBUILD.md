@@ -73,7 +73,7 @@ store, its types, its router entry, and its siblings' conventions.
 
 The machinery for the fix already exists here: `OllamaProvider.chat` accepts
 `tools`, and `orchestrator/chat.py` + `tools.py` already implement a tool-calling
-loop for the Operator.
+loop for Pilot.
 
 Refs: `worker/app/runners/base.py:79-124`, `worker/app/runners/coder.py`
 

@@ -70,7 +70,7 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
-    # ── Operator web search (Phase 1) ──────────────────────────────
+    # ── Pilot web search ───────────────────────────────────────────
     # Global on/off switch. When False the orchestrator never calls a search
     # backend even if a conversation has the toggle on — the UI hides the
     # checkbox entirely.

@@ -1,4 +1,4 @@
-"""URL fetch tool for the Operator's agentic mode.
+"""URL fetch tool for Pilot's agentic mode.
 
 Lightweight by design: an httpx GET, then we pull the useful signal out of
 the HTML — JSON-LD blocks, OpenGraph / product meta tags, and the visible

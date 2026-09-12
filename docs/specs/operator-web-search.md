@@ -1,5 +1,15 @@
 # Operator web search — design spec
 
+> **Superseded in part.** The Operator module is now **Pilot**, and the
+> three-way `web_mode` this spec introduced (`off` / `search` / `tools`) has
+> collapsed to a two-way intent (`off` / `on`). Which mechanism runs is
+> derived per turn from the conversation's mode — Lightweight gets pre-flight
+> search, Thoughtful gets the agentic loop, and a Thoughtful model that can't
+> call tools degrades to search rather than silently ignoring them. Both
+> mechanisms below are still accurate; only the selector is gone. See
+> `docs/PILOT.md`.
+
+
 **Status:** proposed
 **Author:** Will + assistant pair
 **Scope:** add an optional "browse the web" toggle to the Operator chat module so local-model answers don't trail off into 2023-era knowledge.

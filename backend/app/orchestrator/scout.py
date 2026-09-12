@@ -1,7 +1,7 @@
 """Scout — site-knowledge module (Phase A).
 
 Stores, per domain, a validated "recipe" for extracting structured fields
-from that site, so the Operator's fetch_url can return clean fields (price,
+from that site, so Pilot's fetch_url can return clean fields (price,
 title, condition) instead of a wall of page text. Phase A is the runtime
 path + hand-written recipes; agent-assisted learning is Phase B.
 

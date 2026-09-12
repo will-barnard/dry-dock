@@ -27,7 +27,7 @@ deeper version of the existing loop: ComfyUI on the Windows RTX 5080, reached
 by an `imager` worker over a dedicated `image_request` / `image_result` message
 pair. Module UI at `/darkroom`, a keyed submit/poll API at `/api/v1/image`
 (async by necessity — the GPU box sleeps), and a `generate_image` tool the
-Operator is offered only while an imager is idle.
+Pilot is offered only while an imager is idle (and only in Thoughtful mode).
 
 Design: `docs/specs/darkroom-image-generation.md`. Contract: `IMAGE-API.md`.
 Standing up the box: `docs/DARKROOM-SETUP.md`.

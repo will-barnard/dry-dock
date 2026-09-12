@@ -53,7 +53,7 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # app with its own route. The homepage is now a module picker.
 #
 #   engineer  — the original product: autonomous multi-agent software builds
-#   operator  — a chat surface that talks to the worker fleet directly
+#   pilot     — a chat surface that talks to the worker fleet directly
 #   workbench — a resume + cover-letter authoring tool
 #   scout     — per-site extraction recipes for the fetch tool
 #   darkroom  — image generation on the GPU box (ComfyUI, not Ollama)
@@ -76,15 +76,15 @@ MODULES: list[dict] = [
         "accent": "sky",
     },
     {
-        "id": "operator",
-        "name": "Operator",
-        "href": "/operator",
+        "id": "pilot",
+        "name": "Pilot",
+        "href": "/pilot",
         "status": "active",
         "tagline": "Chat directly with an agent",
         "description": (
-            "A conversational surface over the same Ollama-backed workers — ask "
-            "questions, run one-off research or summarization jobs, no project "
-            "or repo required."
+            "A conversational surface over the same Ollama-backed workers. Pick "
+            "Lightweight or Thoughtful and it handles the rest — no pool, no "
+            "model tag, no project or repo required."
         ),
         "accent": "violet",
     },
@@ -122,7 +122,7 @@ MODULES: list[dict] = [
         "tagline": "Site knowledge for the fetch tool",
         "description": (
             "Per-site recipes for pulling structured data — prices, specs, "
-            "titles — out of pages. Makes the Operator's fetch_url return "
+            "titles — out of pages. Makes Pilot's fetch_url return "
             "clean fields instead of raw text on known domains."
         ),
         "accent": "emerald",

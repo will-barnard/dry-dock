@@ -128,9 +128,9 @@
 <section class="bg-white border border-slate-200 rounded p-4 mb-6">
   <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-600 mb-2">Test fetch</h2>
   <p class="text-xs text-slate-500 mb-2">
-    Run a real URL through the live fetch path (the same one the Operator uses).
+    Run a real URL through the live fetch path (the same one Pilot uses).
     Scout routes it to the matching blueprint by URL pattern, so this shows
-    exactly what the Operator would get.
+    exactly what Pilot would get.
   </p>
   <form method="post" action="/scout/profiles/{{ profile.id }}/test-fetch" class="flex gap-2 text-sm">
     <input name="url" required value="{{ test_url or '' }}"

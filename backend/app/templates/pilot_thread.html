@@ -1,20 +1,29 @@
 {% extends "base.html" %}
-{% block title %}{{ conversation.title }} — Operator{% endblock %}
+{% block title %}{{ conversation.title }} — Pilot{% endblock %}
 {% block content %}
 <nav class="text-sm text-slate-500 mb-4">
   <a href="/" class="hover:underline">Modules</a> /
-  <a href="/operator" class="hover:underline">Operator</a> /
+  <a href="/pilot" class="hover:underline">Pilot</a> /
   {{ conversation.title }}
 </nav>
 
 <header class="flex items-baseline justify-between mb-4">
   <div>
     <h1 class="text-xl font-semibold">{{ conversation.title }}</h1>
-    <div class="text-xs text-slate-500 font-mono mt-0.5">
-      pool: {{ conversation.pool }}{% if conversation.model %} · {{ conversation.model }}{% endif %}
+    <div class="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5"
+         title="Resolved right now: pool {{ status.pool }}{% if status.model %} · {{ status.model }}{% else %} · each worker's default model{% endif %}. Change it in Pilot settings.">
+      {% if status.online %}
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+      {% else %}
+        <span class="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0"></span>
+      {% endif %}
+      {{ mode_labels.get(mode, mode) }}
+      {% if status.tools and status.tool_capable is not false %}
+        <span class="text-[10px] bg-violet-100 text-violet-700 rounded px-1.5 py-0.5">tools</span>
+      {% endif %}
     </div>
   </div>
-  <form method="post" action="/operator/conversations/{{ conversation.id }}/delete" class="m-0"
+  <form method="post" action="/pilot/conversations/{{ conversation.id }}/delete" class="m-0"
         onsubmit="return confirm('Delete this conversation?');">
     <button class="text-xs px-2 py-1 rounded bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200">Delete</button>
   </form>
@@ -115,7 +124,7 @@
       <div class="flex justify-start">
         <div class="bg-white border border-slate-200 rounded-lg px-3 py-2 max-w-2xl w-full">
           <div class="text-[10px] uppercase tracking-wide text-slate-400 mb-1">
-            assistant{% if m.worker_name %} · {{ m.worker_name }}{% endif %}
+            assistant{% if m.worker_name %} · {{ m.worker_name }}{% endif %}{% if m.model_used %} · {{ m.model_used }}{% endif %}
           </div>
           {# tool_status badge for in-flight searches; SSE replaces this. #}
           <div id="tool-{{ m.id }}" class="hidden text-xs text-slate-500 mb-1"></div>
@@ -135,28 +144,37 @@
 </div>
 
 <div id="composer" class="bg-white border border-slate-200 rounded p-3 sticky bottom-4 scroll-mt-4">
-  <form id="chat-form" method="post" action="/operator/conversations/{{ conversation.id }}/messages"
+  <form id="chat-form" method="post" action="/pilot/conversations/{{ conversation.id }}/messages"
         class="flex gap-2 items-end">
-    <textarea id="chat-input" name="content" required rows="1" placeholder="Message the {{ conversation.pool }} pool…"
+    <textarea id="chat-input" name="content" required rows="1" placeholder="Message ({{ mode_labels.get(mode, mode) }})…"
               class="flex-1 border border-slate-300 rounded px-2 py-1.5 text-base sm:text-sm resize-none overflow-hidden"></textarea>
     <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded shrink-0">Send</button>
   </form>
 
-  {% if web_search_available %}
-    {# Web access mode selector. A tiny separate form so the choice persists
-       immediately on change (no "save then send"), and the message form
-       payload stays clean. #}
-    <form id="web-mode-form" method="post"
-          action="/operator/conversations/{{ conversation.id }}/settings"
-          class="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-      <label class="inline-flex items-center gap-1.5">
-        Web access:
-        <select name="web_mode" onchange="this.form.submit()"
-                class="border border-slate-300 rounded px-1.5 py-0.5 text-xs">
-          <option value="off" {% if web_mode == 'off' %}selected{% endif %}>Off</option>
-          <option value="search" {% if web_mode == 'search' %}selected{% endif %}>Search (any model)</option>
-          <option value="tools" {% if web_mode == 'tools' %}selected{% endif %}>Tools (search + fetch)</option>
-        </select>
+  {# Thread controls. One form so any change (mode, web, site) persists
+     immediately — no "save then send". Mode is switchable mid-thread because
+     the (pool, model) pair is resolved per turn, not frozen at creation. #}
+  <form id="thread-controls" method="post"
+        action="/pilot/conversations/{{ conversation.id }}/settings"
+        class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-slate-500">
+
+    <span class="inline-flex items-center gap-1 border border-slate-200 rounded p-0.5">
+      {% for m_key, m_label in mode_labels.items() %}
+        <label class="inline-flex items-center gap-1 px-2 py-0.5 rounded cursor-pointer
+                      {% if m_key == mode %}bg-slate-900 text-white{% else %}hover:bg-slate-100{% endif %}"
+               title="{{ mode_blurbs.get(m_key, '') }}">
+          <input type="radio" name="mode" value="{{ m_key }}" class="hidden"
+                 onchange="this.form.submit()" {% if m_key == mode %}checked{% endif %}>
+          {{ m_label }}
+        </label>
+      {% endfor %}
+    </span>
+
+    {% if web_search_available %}
+      <label class="inline-flex items-center gap-1.5 cursor-pointer">
+        <input type="checkbox" name="web" value="on" onchange="this.form.submit()"
+               {% if web_on %}checked{% endif %}>
+        Web
       </label>
       <label class="inline-flex items-center gap-1.5">
         Site:
@@ -166,8 +184,7 @@
                class="border border-slate-300 rounded px-1.5 py-0.5 text-xs font-mono w-40"
                title="Restrict every search in this conversation to one domain. Leave blank for the whole web.">
       </label>
-      <span class="text-slate-400">·</span>
-      <span class="font-mono text-[11px]">
+      <span class="font-mono text-[11px] text-slate-400">
         {{ web_search_backend }}
         {% if web_search_daily_budget > 0 %}
           · {{ web_search_usage_today }} / {{ web_search_daily_budget }} today
@@ -175,9 +192,43 @@
           · {{ web_search_usage_today }} today
         {% endif %}
       </span>
-      {% if web_mode == 'tools' %}
-        <span class="text-[11px] text-amber-600">needs a tool-capable model (Qwen 2.5 / Llama 3.1)</span>
+      {% if web_on %}
+        {% if status.effective_web == 'tools' %}
+          <span class="text-[11px] text-slate-400">searches and reads pages</span>
+        {% elif status.tools and status.tool_capable is false %}
+          <span class="text-[11px] text-amber-600">
+            search results only — {{ mode_labels.get(mode, mode) }}'s model can't call tools
+            (<a href="/pilot/settings" class="underline">fix</a>)
+          </span>
+        {% else %}
+          <span class="text-[11px] text-slate-400">search results only</span>
+        {% endif %}
       {% endif %}
+    {% else %}
+      {# Keep the thread's web intent intact when the controls aren't rendered. #}
+      <input type="hidden" name="web" value="{{ 'on' if web_on else '' }}">
+      <input type="hidden" name="search_site" value="{{ conversation.search_site or '' }}">
+    {% endif %}
+  </form>
+
+  {% if not status.online %}
+    {# Preflight. Say it before the message is typed, not after it fails. #}
+    <div class="mt-2 text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded px-2 py-1.5">
+      No worker is online for {{ mode_labels.get(mode, mode) }} right now.
+      {% if other_status.online %}
+        <button type="submit" form="switch-mode-form" class="underline font-medium">
+          Switch to {{ mode_labels.get(other_mode, other_mode) }}
+        </button>, which has one.
+      {% else %}
+        Neither mode has one — wake a machine, or repoint the modes in
+        <a href="/pilot/settings" class="underline">Pilot settings</a>.
+      {% endif %}
+    </div>
+    <form id="switch-mode-form" method="post"
+          action="/pilot/conversations/{{ conversation.id }}/settings" class="hidden">
+      <input type="hidden" name="mode" value="{{ other_mode }}">
+      <input type="hidden" name="web" value="{{ 'on' if web_on else '' }}">
+      <input type="hidden" name="search_site" value="{{ conversation.search_site or '' }}">
     </form>
   {% endif %}
 </div>
@@ -219,7 +270,7 @@
 
   // --- SSE stream ---
   (function () {
-    const es = new EventSource("/stream/operator/{{ conversation.id }}");
+    const es = new EventSource("/stream/pilot/{{ conversation.id }}");
 
     function box(id) { return document.getElementById("msg-" + id); }
     function think(id) { return document.getElementById("think-" + id); }

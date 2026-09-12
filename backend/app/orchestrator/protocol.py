@@ -136,7 +136,7 @@ class PingMsg(BaseModel):
     type: Literal["ping"] = "ping"
 
 
-# ────────────────────────── Operator chat messages ──────────────────────────
+# ──────────────────────────── Pilot chat messages ────────────────────────────
 #
 # Chat is a separate lifecycle from tasks: no run row, no git, no retries.
 # The orchestrator picks a live worker directly and sends a chat_request;

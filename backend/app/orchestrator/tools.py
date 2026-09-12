@@ -1,6 +1,6 @@
-"""Operator tool registry + dispatcher.
+"""Pilot tool registry + dispatcher.
 
-The Operator's agentic mode exposes a small set of tools to the model. The
+Pilot's agentic mode exposes a small set of tools to the model. The
 worker emits a ChatToolCallMsg when the model wants one; the orchestrator
 runs it here and returns the text result. Keeping the registry server-side
 (not on the worker) means one place for API keys, rate limits, and audit.
@@ -128,7 +128,7 @@ GENERATE_IMAGE_TOOL = {
 }
 
 # The tool set offered in agentic mode.
-OPERATOR_TOOLS: list[dict[str, Any]] = [WEB_SEARCH_TOOL, FETCH_URL_TOOL]
+PILOT_TOOLS: list[dict[str, Any]] = [WEB_SEARCH_TOOL, FETCH_URL_TOOL]
 
 
 async def available_tools() -> list[dict[str, Any]]:
@@ -142,7 +142,7 @@ async def available_tools() -> list[dict[str, Any]]:
     tool simply isn't there — the model then answers normally and the user can
     use the Darkroom module, which handles waking gracefully.
     """
-    tools = list(OPERATOR_TOOLS)
+    tools = list(PILOT_TOOLS)
     try:
         from app.orchestrator.image_jobs import pick_imager
 

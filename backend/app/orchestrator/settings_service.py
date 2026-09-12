@@ -57,6 +57,10 @@ def _env_default_for(role: str) -> str:
 # ── module-level cache ─────────────────────────────────────────────
 
 
+# Key prefixes this cache holds. Anything read through get_raw/set_raw must be
+# listed here or it will be re-read from the DB on every call.
+_CACHED_PREFIXES: tuple[str, ...] = ("role_model.", "worker_priority.", "pilot.")
+
 _cache: dict[str, str] = {}
 _cache_lock = asyncio.Lock()
 _cache_loaded = False
@@ -67,7 +71,7 @@ async def _load_cache(session: AsyncSession) -> None:
     rows = (await session.execute(select(Setting))).scalars().all()
     new_cache: dict[str, str] = {}
     for row in rows:
-        if row.key.startswith("role_model.") or row.key.startswith("worker_priority."):
+        if row.key.startswith(_CACHED_PREFIXES):
             new_cache[row.key] = row.value
     _cache.clear()
     _cache.update(new_cache)
@@ -243,6 +247,44 @@ async def workers_per_role() -> dict[str, list[dict]]:
     for role, lst in out.items():
         lst.sort(key=lambda d: (d["priority"], d["name"]))
     return out
+
+
+# ── generic settings access ────────────────────────────────────────
+#
+# For scalars stored in `app_settings` that don't go through the role/worker
+# validation above — Pilot's mode configuration, for one. A key prefix must
+# appear in _CACHED_PREFIXES or reads bypass the cache.
+
+
+async def get_raw(key: str) -> str | None:
+    """Read one app_settings value, or None if unset."""
+    async with _cache_lock:
+        if not _cache_loaded:
+            async with SessionLocal() as session:
+                await _load_cache(session)
+        return _cache.get(key)
+
+
+async def set_raw(key: str, value: str | None) -> None:
+    """Upsert one app_settings value, or delete the row when value is falsy."""
+    async with SessionLocal() as session:
+        async with session.begin():
+            if not value:
+                existing = await session.get(Setting, key)
+                if existing:
+                    await session.delete(existing)
+            else:
+                stmt = pg_insert(Setting).values(key=key, value=value)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[Setting.key], set_={"value": value}
+                )
+                await session.execute(stmt)
+    async with _cache_lock:
+        if value:
+            _cache[key] = value
+        else:
+            _cache.pop(key, None)
+    log.info("settings.raw_changed", key=key, value=value)
 
 
 def known_roles() -> Iterable[str]:

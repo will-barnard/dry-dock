@@ -13,7 +13,7 @@ anything recently. So an image job is:
             → PNGs written to the images volume, row goes DONE
 
 Callers either poll the row (the API, the module UI) or await it with a bounded
-timeout (`wait_for_job`, used by the API's optional `wait` and the Operator
+timeout (`wait_for_job`, used by the API's optional `wait` and the Pilot
 tool). Nothing blocks an HTTP request for the cold path.
 
 Single-replica assumption, same as chat and generate: the worker's WS
@@ -634,7 +634,7 @@ def fail_image_jobs(job_ids: set[uuid.UUID], worker_name: str) -> None:
 
 async def wait_for_job(job_id: uuid.UUID, timeout: float) -> ImageJob | None:
     """Poll the row until the job leaves a non-terminal state or `timeout`
-    expires. Used by the API's optional `wait` and by the Operator tool.
+    expires. Used by the API's optional `wait` and by the Pilot tool.
     Returns the job (terminal or not) — callers decide what to do with a job
     that is still running."""
     deadline = time.monotonic() + timeout

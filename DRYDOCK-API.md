@@ -4,7 +4,7 @@ A single, stable HTTP endpoint for one-shot text generation on your local
 worker fleet. Point any app at it, present the API key, get model output back
 in the HTTP response. No WebSocket, no job polling, no browser session.
 
-This is the request/response cousin of Operator chat: instead of streaming
+This is the request/response cousin of Pilot chat: instead of streaming
 deltas to a browser, `generate` blocks until the worker finishes and returns
 the whole text at once — ideal for server-to-server calls (e.g. drafting sales
 follow-ups, summaries, classifications) from another backend.
@@ -203,6 +203,6 @@ The only new machinery is on the orchestrator:
   Future and the DB Workbench handlers are skipped. Worker disconnect rejects
   any waiting Futures.
 
-This assumes a single orchestrator replica (same assumption as Operator chat):
+This assumes a single orchestrator replica (same assumption as Pilot chat):
 the worker's WebSocket and the awaiting HTTP request live in the same process.
 Multi-replica support would need a shared result bus.

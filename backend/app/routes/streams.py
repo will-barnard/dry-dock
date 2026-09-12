@@ -18,7 +18,7 @@ def _sse(event: dict) -> bytes:
 
 def _sse_named(name: str, event: dict) -> bytes:
     """SSE message with a named event type, so EventSource.addEventListener
-    can dispatch on it. Used by the Operator chat stream."""
+    can dispatch on it. Used by the Pilot chat stream."""
     return f"event: {name}\ndata: {json.dumps(event)}\n\n".encode()
 
 
@@ -42,11 +42,15 @@ async def stream_global():
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@router.get("/operator/{conversation_id}")
+@router.get("/pilot/{conversation_id}")
+@router.get("/operator/{conversation_id}", include_in_schema=False)
 async def stream_conversation(conversation_id: uuid.UUID):
-    """Operator chat stream. Emits named events — `chunk`, `done`, `error` —
+    """Pilot chat stream. Emits named events — `chunk`, `done`, `error` —
     each carrying {assistant_message_id, content|error}. The thread template's
-    EventSource dispatches on the event name."""
+    EventSource dispatches on the event name.
+
+    The /operator alias is kept so a tab left open across the deploy keeps
+    streaming instead of silently reconnecting to a 404 forever."""
     async def gen():
         yield _sse_named("open", {"conversation_id": str(conversation_id)})
         async for event in bus.subscribe(bus.conversation_topic(conversation_id)):

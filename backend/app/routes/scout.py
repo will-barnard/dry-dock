@@ -222,7 +222,7 @@ async def test_fetch(
     if not profile:
         raise HTTPException(404, "profile not found")
     # Run the real fetch path — this exercises the active recipe exactly as
-    # the Operator's fetch_url tool would.
+    # Pilot's fetch_url tool would.
     result = await web_fetch.fetch(url.strip())
     return templates.TemplateResponse(
         request,

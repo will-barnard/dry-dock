@@ -252,26 +252,34 @@ class MessageRole(str, enum.Enum):
 
 
 class Conversation(Base):
-    """An Operator-module chat thread. Independent of projects/tasks — chat is
+    """A Pilot-module chat thread. Independent of projects/tasks — chat is
     its own lifecycle that only borrows the worker fleet for inference."""
 
     __tablename__ = "conversations"
 
     id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
     title: Mapped[str] = mapped_column(String(255), default="New conversation")
-    # Which worker pool answers this thread's turns, and an optional model
-    # override. Defaults are applied at creation time by the route.
+    # Pilot mode: "light" | "deep". This is the ONLY routing decision stored
+    # on the row — the (pool, model) pair is resolved from app_settings at
+    # dispatch time by orchestrator/pilot.py. See that module for why.
+    mode: Mapped[str] = mapped_column(String(16), default="deep")
+    # Legacy, no longer read. Pre-Pilot conversations pinned a pool and an
+    # optional model here at creation, with no UI to change them afterwards —
+    # which is exactly what late binding fixes. Kept so an old thread's
+    # original pinning stays inspectable.
     pool: Mapped[str] = mapped_column(String(64), default="researcher")
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Legacy Phase-1 flag, superseded by web_mode. Kept so old rows don't
     # break; the boot migration backfills web_mode from it.
     web_search_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Web access mode for this conversation:
-    #   "off"    — plain chat, no web (default)
-    #   "search" — Phase 1 pre-flight SearXNG injection; works on any model
-    #   "tools"  — Phase 2 agentic loop (web_search + fetch_url); needs a
-    #              tool-capable model
+    # Web access INTENT for this conversation: "off" | "on".
+    #
+    # It deliberately does not store the mechanism. Which of pre-flight search
+    # or the agentic tool loop actually runs is derived per turn from the
+    # conversation's mode (pilot.web_mechanism), so flipping a thread from
+    # lightweight to thoughtful upgrades its web access with it. The old
+    # three-way values ("search"/"tools") are migrated to "on" at boot.
     web_mode: Mapped[str] = mapped_column(String(16), default="off")
     # Optional domain restriction. When set (e.g. "reverb.com"), every web
     # search this conversation runs is scoped with `site:<domain>`. Applies
@@ -301,6 +309,10 @@ class ConversationMessage(Base):
     complete: Mapped[bool] = mapped_column(Boolean, default=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     worker_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # The model this turn actually resolved to, recorded at dispatch. Pilot
+    # hides the model from the composer, so this is where the answer to "what
+    # answered me?" lives — without it a bad reply is undiagnosable.
+    model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # TOOL-role rows store metadata about an external call the orchestrator
     # made: `tool_name` is e.g. "web_search", `tool_payload` is the raw
     # structured result (list of {title, url, snippet} for searches). Null
@@ -735,7 +747,7 @@ class ImageJob(Base):
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     worker_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Set when an Operator tool call created the job, so the transcript can
+    # Set when a Pilot tool call created the job, so the transcript can
     # link back to the image.
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), nullable=True, index=True

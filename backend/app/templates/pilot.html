@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Pilot — dry-dock{% endblock %}
+{% block content %}
+<nav class="text-sm text-slate-500 mb-4"><a href="/" class="hover:underline">Modules</a> / Pilot</nav>
+
+<header class="flex items-baseline justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-semibold">Pilot</h1>
+    <p class="text-sm text-slate-500 mt-1">Chat with the fleet. Pick how much thought it should get.</p>
+  </div>
+  <a href="/pilot/settings" class="text-sm text-slate-500 hover:text-slate-900 hover:underline">Mode settings</a>
+</header>
+
+<section class="grid grid-cols-1 md:grid-cols-3 gap-6">
+  <div class="md:col-span-2 space-y-3">
+    <h2 class="text-lg font-semibold">Conversations</h2>
+    {% for c in conversations %}
+      <div class="bg-white border border-slate-200 rounded p-4 hover:border-slate-400 flex items-baseline justify-between">
+        <a href="/pilot/conversations/{{ c.id }}" class="block flex-1">
+          <div class="font-medium">{{ c.title }}</div>
+          <div class="text-xs text-slate-500 mt-0.5">
+            {{ mode_labels.get(c.mode, c.mode) }}
+          </div>
+        </a>
+        <form method="post" action="/pilot/conversations/{{ c.id }}/delete" class="m-0"
+              onsubmit="return confirm('Delete this conversation?');">
+          <button class="text-xs text-rose-600 hover:text-rose-800">delete</button>
+        </form>
+      </div>
+    {% else %}
+      <div class="text-slate-500 italic">No conversations yet. Start one on the right.</div>
+    {% endfor %}
+  </div>
+
+  <aside>
+    <form method="post" action="/pilot/conversations" class="bg-white border border-slate-200 rounded p-4 space-y-4">
+      <h2 class="text-lg font-semibold">New conversation</h2>
+
+      <label class="text-sm block">title <span class="text-slate-400">(optional)</span>
+        <input name="title" placeholder="auto-set from first message"
+               class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm">
+      </label>
+
+      <fieldset class="space-y-2">
+        <legend class="text-sm mb-1">Mode</legend>
+        {% for m in modes %}
+          <label class="flex gap-2 items-start border rounded p-2 cursor-pointer
+                        {% if m.online %}border-slate-300 hover:border-slate-500{% else %}border-slate-200 bg-slate-50{% endif %}">
+            <input type="radio" name="mode" value="{{ m.mode }}" class="mt-1"
+                   {% if m.mode == default_mode %}checked{% endif %}>
+            <span class="flex-1">
+              <span class="text-sm font-medium flex items-center gap-1.5">
+                {{ m.label }}
+                {% if m.online %}
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500" title="{{ m.worker_count }} worker(s) online"></span>
+                {% else %}
+                  <span class="w-1.5 h-1.5 rounded-full bg-rose-400" title="no worker online"></span>
+                {% endif %}
+                {% if m.tools %}
+                  <span class="text-[10px] bg-violet-100 text-violet-700 rounded px-1.5 py-0.5">tools</span>
+                {% endif %}
+              </span>
+              <span class="text-xs text-slate-500 block mt-0.5">
+                {% if m.online %}
+                  {{ m.worker_count }} worker{{ '' if m.worker_count == 1 else 's' }} online
+                {% else %}
+                  Nothing online right now — the machine is probably asleep.
+                {% endif %}
+              </span>
+            </span>
+          </label>
+        {% endfor %}
+      </fieldset>
+
+      <label class="text-sm block">system prompt <span class="text-slate-400">(optional)</span>
+        <textarea name="system_prompt" rows="3"
+                  class="w-full mt-1 border border-slate-300 rounded px-2 py-1 text-sm"></textarea>
+      </label>
+
+      <button class="bg-slate-900 text-white text-sm px-4 py-2 rounded">Start</button>
+      <p class="text-xs text-slate-400">
+        You can switch a thread's mode at any time — it takes effect on the next message.
+      </p>
+    </form>
+  </aside>
+</section>
+{% endblock %}

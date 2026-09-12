@@ -2,7 +2,7 @@
 
 The UI half of the image pipeline. Everything stateful lives in
 `orchestrator/image_jobs.py`; this module is routes and rendering only, the
-same split Operator and Workbench use.
+same split Pilot and Workbench use.
 
 Job cards poll themselves via HTMX (`hx-trigger="load delay:2s"`) rather than
 riding SSE. Deliberate for now: a render is a handful of state changes over

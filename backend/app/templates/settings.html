@@ -16,6 +16,12 @@
     else uses these defaults. Available models are the ones currently installed
     on at least one online worker in that role's pool.
   </p>
+  <p class="text-xs text-slate-500 mt-2">
+    These pins are a <strong>hard filter on the task router</strong>: a worker without
+    that exact tag is dropped from Engineer dispatch entirely. Pilot chat does not use
+    them — it picks a worker from the live registry directly. Configure that on
+    <a href="/pilot/settings" class="underline">Pilot settings</a>.
+  </p>
 
   <form method="post" action="/settings" class="mt-4 space-y-3">
     <table class="w-full text-sm">
